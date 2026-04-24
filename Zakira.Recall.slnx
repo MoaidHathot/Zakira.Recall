@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zakira.Recall.Abstractions/Zakira.Recall.Abstractions.csproj" />
+    <Project Path="src/Zakira.Recall.Core/Zakira.Recall.Core.csproj" />
+    <Project Path="src/Zakira.Recall.Playwright/Zakira.Recall.Playwright.csproj" />
+    <Project Path="src/Zakira.Recall.Tool/Zakira.Recall.Tool.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zakira.Recall.Tests.Integration/Zakira.Recall.Tests.Integration.csproj" />
+    <Project Path="tests/Zakira.Recall.Tests.Unit/Zakira.Recall.Tests.Unit.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,43 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PackageId>Zakira.Recall</PackageId>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>recall</ToolCommandName>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\packages</PackageOutputPath>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
+    <PackageTags>mcp;cli;search;web;playwright;tool</PackageTags>
+    <Description>Local CLI and MCP server for web search, page fetch, and research workflows without API keys.</Description>
+    <PlaywrightPlatform Condition="$([MSBuild]::IsOSPlatform('Windows'))">win</PlaywrightPlatform>
+    <PlaywrightPlatform Condition="$([MSBuild]::IsOSPlatform('Linux')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">linux-x64</PlaywrightPlatform>
+    <PlaywrightPlatform Condition="$([MSBuild]::IsOSPlatform('Linux')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</PlaywrightPlatform>
+    <PlaywrightPlatform Condition="$([MSBuild]::IsOSPlatform('OSX')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'X64'">osx-x64</PlaywrightPlatform>
+    <PlaywrightPlatform Condition="$([MSBuild]::IsOSPlatform('OSX')) AND '$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">osx-arm64</PlaywrightPlatform>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zakira.Recall.Abstractions\Zakira.Recall.Abstractions.csproj" />
+    <ProjectReference Include="..\Zakira.Recall.Core\Zakira.Recall.Core.csproj" />
+    <ProjectReference Include="..\Zakira.Recall.Playwright\Zakira.Recall.Playwright.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+</Project>
