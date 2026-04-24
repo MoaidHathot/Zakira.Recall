@@ -1,0 +1,27 @@
+{
+  "defaultProvider": "duckduckgo",
+  "defaultProfile": "default",
+  "profilesRoot": "C:/Users/your-user/AppData/Local/Zakira.Recall/profiles",
+  "profiles": {
+    "default": {
+      "name": "default",
+      "channel": "msedge",
+      "defaultProvider": "duckduckgo",
+      "headless": true,
+      "locale": "en-US",
+      "timeoutSeconds": 30,
+      "metadata": {}
+    },
+    "interactive": {
+      "name": "interactive",
+      "channel": "msedge",
+      "defaultProvider": "bing",
+      "headless": false,
+      "userDataDir": "C:/Users/your-user/AppData/Local/Zakira.Recall/profiles/interactive",
+      "timeoutSeconds": 45,
+      "metadata": {
+        "purpose": "manual sign-in and browsing"
+      }
+    }
+  }
+}

@@ -27,6 +27,7 @@ zakira.recall --help
 recall search "site:github.com mcp server"
 recall fetch "https://example.com"
 recall research "best local mcp web search tools"
+recall config init
 recall profile init default --channel msedge --provider duckduckgo --headless false
 recall mcp
 ```
@@ -61,34 +62,23 @@ Default profile storage locations:
 
 Example config file for `$XDG_CONFIG_HOME/Zakira.Recall/profiles.json`:
 
-```json
-{
-  "defaultProvider": "duckduckgo",
-  "defaultProfile": "default",
-  "profilesRoot": "C:/Users/your-user/AppData/Local/Zakira.Recall/profiles",
-  "profiles": {
-    "default": {
-      "name": "default",
-      "channel": "msedge",
-      "defaultProvider": "duckduckgo",
-      "headless": true,
-      "locale": "en-US",
-      "timeoutSeconds": 30,
-      "metadata": {}
-    },
-    "interactive": {
-      "name": "interactive",
-      "channel": "msedge",
-      "defaultProvider": "bing",
-      "headless": false,
-      "userDataDir": "C:/Users/your-user/AppData/Local/Zakira.Recall/profiles/interactive",
-      "timeoutSeconds": 45,
-      "metadata": {
-        "purpose": "manual sign-in and browsing"
-      }
-    }
-  }
-}
+- `examples/profiles.json`
+
+Generate it with the CLI:
+
+```powershell
+recall config init
+```
+
+By default this writes to:
+
+- `$XDG_CONFIG_HOME/Zakira.Recall/profiles.json` when `XDG_CONFIG_HOME` is set
+- otherwise `%APPDATA%\Zakira.Recall\profiles.json`
+
+Override the output path if needed:
+
+```powershell
+recall config init --path "C:/temp/recall-profiles.json"
 ```
 
 Notes:

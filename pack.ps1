@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $toolProject = Join-Path $repoRoot 'src\Zakira.Recall.Tool\Zakira.Recall.Tool.csproj'
@@ -65,16 +66,7 @@ if (-not $aliasExists) {
 
     $packageName = Split-Path -Leaf $package.FullName
     Remove-Item -LiteralPath $package.FullName -Force
-    Push-Location $packageScratch
-    try {
-        tar -a -cf "..\$packageName" *
-        if ($LASTEXITCODE -ne 0) {
-            throw 'Failed to rebuild the nupkg archive after injecting the secondary tool command.'
-        }
-    }
-    finally {
-        Pop-Location
-    }
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($packageScratch, (Join-Path $packageOutput $packageName))
 }
 
 Write-Host "Created package: $($package.FullName)"

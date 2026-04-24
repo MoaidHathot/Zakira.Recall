@@ -28,6 +28,7 @@ internal static class ZakiraRecallProgram
             "search" => await RunSearchAsync(parsed),
             "fetch" => await RunFetchAsync(parsed),
             "research" => await RunResearchAsync(parsed),
+            "config" => await RunConfigAsync(parsed),
             "profile" => await RunProfileAsync(parsed),
             "mcp" => await RunMcpAsync(parsed),
             _ => ThrowUnknownCommand(parsed.Command)
@@ -106,6 +107,61 @@ internal static class ZakiraRecallProgram
         return 0;
     }
 
+    private static async Task<int> RunConfigAsync(CliArguments parsed)
+    {
+        if (!string.Equals(parsed.Subcommand, "init", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Supported config subcommands: init");
+        }
+
+        using var host = BuildHost(parsed);
+        var writer = host.Services.GetRequiredService<IRecallConfigWriter>();
+        var locator = host.Services.GetRequiredService<IRecallConfigLocator>();
+        var path = parsed.GetOption("path") ?? locator.GetDefaultConfigPath();
+        var profilesRoot = parsed.GetOption("profiles-root");
+        var channel = parsed.GetOption("channel") ?? "msedge";
+        var provider = parsed.GetOption("provider") ?? parsed.GetOption("default-provider") ?? "duckduckgo";
+        var profileName = parsed.GetOption("profile") ?? parsed.GetOption("default-profile") ?? "default";
+        var interactiveProfileName = parsed.GetOption("interactive-profile") ?? "interactive";
+        var locale = parsed.GetOption("locale") ?? "en-US";
+
+        var config = new RecallConfig
+        {
+            DefaultProvider = provider,
+            DefaultProfile = profileName,
+            ProfilesRoot = profilesRoot,
+            Profiles = new Dictionary<string, RecallProfileConfig>(StringComparer.OrdinalIgnoreCase)
+            {
+                [profileName] = new()
+                {
+                    Name = profileName,
+                    Channel = channel,
+                    DefaultProvider = provider,
+                    Headless = true,
+                    Locale = locale,
+                    TimeoutSeconds = 30,
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                },
+                [interactiveProfileName] = new()
+                {
+                    Name = interactiveProfileName,
+                    Channel = channel,
+                    DefaultProvider = provider == "duckduckgo" ? "bing" : provider,
+                    Headless = false,
+                    TimeoutSeconds = 45,
+                    Metadata = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["purpose"] = "manual sign-in and browsing"
+                    }
+                }
+            }
+        };
+
+        var savedPath = await writer.SaveAsync(config, path);
+        Console.Out.WriteLine(savedPath);
+        return 0;
+    }
+
     private static async Task<int> RunMcpAsync(CliArguments parsed)
     {
         using var host = BuildHost(parsed, configureMcp: true);
@@ -149,6 +205,7 @@ internal static class ZakiraRecallProgram
           search <query> [--provider <name>] [--profile <name>] [--limit <n>]
           fetch <url> [--profile <name>]
           research <query> [--provider <name>] [--profile <name>] [--limit <n>] [--top-pages <n>]
+          config init [--path <path>] [--profile <name>] [--interactive-profile <name>] [--provider <name>] [--channel <name>] [--locale <name>] [--profiles-root <path>]
           profile init <name> [--channel <name>] [--provider <name>] [--headless <true|false>] [--user-data-dir <path>]
           mcp
 
@@ -209,7 +266,10 @@ internal sealed class CliArguments
         }
 
         result.Command = args[index++];
-        if (string.Equals(result.Command, "profile", StringComparison.OrdinalIgnoreCase) && index < args.Length && !args[index].StartsWith("--", StringComparison.Ordinal))
+        if ((string.Equals(result.Command, "profile", StringComparison.OrdinalIgnoreCase)
+             || string.Equals(result.Command, "config", StringComparison.OrdinalIgnoreCase))
+            && index < args.Length
+            && !args[index].StartsWith("--", StringComparison.Ordinal))
         {
             result.Subcommand = args[index++];
         }
