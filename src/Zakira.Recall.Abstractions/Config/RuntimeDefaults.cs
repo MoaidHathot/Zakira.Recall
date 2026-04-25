@@ -9,4 +9,6 @@ public sealed class RuntimeDefaults
     public string? DefaultProfile { get; set; }
 
     public string? ProfilesRoot { get; set; }
+
+    public string? LogLevel { get; set; }
 }

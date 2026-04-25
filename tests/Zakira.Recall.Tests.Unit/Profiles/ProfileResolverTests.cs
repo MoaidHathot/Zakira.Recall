@@ -31,7 +31,8 @@ public sealed class ProfileResolverTests
             var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
             var runtimeDefaults = new RuntimeDefaults { ConfigPath = configPath };
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
-            IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults);
+            IRecallConfigValidator validator = new RecallConfigValidator();
+            IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults, validator);
             var resolver = new ProfileResolver(loader, environment);
 
             var profile = await resolver.ResolveAsync(null, null);
@@ -49,20 +50,41 @@ public sealed class ProfileResolverTests
     [Fact]
     public async Task Uses_Profiles_Root_From_Runtime_Defaults_When_Present()
     {
-        var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
-        var runtimeDefaults = new RuntimeDefaults
+        var tempRoot = Directory.CreateTempSubdirectory();
+        try
         {
-            DefaultProfile = "personal",
-            ProfilesRoot = @"D:\recall\profiles"
-        };
+            var configPath = Path.Combine(tempRoot.FullName, "profiles.json");
+            await File.WriteAllTextAsync(configPath, """
+            {
+              "profiles": {
+                "personal": {
+                  "defaultProvider": "duckduckgo"
+                }
+              }
+            }
+            """);
 
-        IRecallConfigLocator locator = new RecallConfigLocator(environment);
-        IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults);
-        var resolver = new ProfileResolver(loader, environment);
+            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
+            var runtimeDefaults = new RuntimeDefaults
+            {
+                ConfigPath = configPath,
+                DefaultProfile = "personal",
+                ProfilesRoot = @"D:\recall\profiles"
+            };
 
-        var profile = await resolver.ResolveAsync(null, "duckduckgo");
+            IRecallConfigLocator locator = new RecallConfigLocator(environment);
+            IRecallConfigValidator validator = new RecallConfigValidator();
+            IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults, validator);
+            var resolver = new ProfileResolver(loader, environment);
 
-        Assert.Equal(Path.Combine(Path.GetFullPath(@"D:\recall\profiles"), "personal"), profile.UserDataDir);
-        Assert.Equal("duckduckgo", profile.DefaultProvider);
+            var profile = await resolver.ResolveAsync("personal", "duckduckgo");
+
+            Assert.Equal(Path.Combine(Path.GetFullPath(@"D:\recall\profiles"), "personal"), profile.UserDataDir);
+            Assert.Equal("duckduckgo", profile.DefaultProvider);
+        }
+        finally
+        {
+            tempRoot.Delete(true);
+        }
     }
 }

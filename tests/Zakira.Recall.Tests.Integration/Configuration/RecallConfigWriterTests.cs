@@ -17,7 +17,7 @@ public sealed class RecallConfigWriterTests
                 @"C:\Roaming",
                 @"C:\Local");
             var locator = new RecallConfigLocator(environment);
-            var writer = new RecallConfigWriter(locator, new RuntimeDefaults());
+            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator());
 
             var path = await writer.SaveAsync(new RecallConfig
             {
@@ -30,6 +30,30 @@ public sealed class RecallConfigWriterTests
 
             Assert.Equal(Path.Combine(root.FullName, "Zakira.Recall", "profiles.json"), path);
             Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            root.Delete(true);
+        }
+    }
+
+    [Fact]
+    public async Task Rejects_Invalid_Config_On_Save()
+    {
+        var root = Directory.CreateTempSubdirectory();
+        try
+        {
+            var environment = new FakeSystemEnvironment(
+                new Dictionary<string, string?> { ["XDG_CONFIG_HOME"] = root.FullName },
+                @"C:\Roaming",
+                @"C:\Local");
+            var locator = new RecallConfigLocator(environment);
+            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator());
+
+            await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            {
+                await writer.SaveAsync(new RecallConfig { DefaultProvider = "google" });
+            });
         }
         finally
         {

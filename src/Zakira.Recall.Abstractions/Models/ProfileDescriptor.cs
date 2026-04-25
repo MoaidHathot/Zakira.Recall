@@ -15,4 +15,14 @@ public sealed class ProfileDescriptor
     public string? Locale { get; init; }
 
     public int TimeoutSeconds { get; init; } = 30;
+
+    public IReadOnlyList<string> FallbackProviders { get; init; } = [];
+
+    public bool EnableProviderFallback { get; init; } = true;
+
+    public int ProviderHealthCooldownSeconds { get; init; } = 300;
+
+    public int MaxConcurrentFetches { get; init; } = 3;
+
+    public string? LogLevel { get; init; }
 }

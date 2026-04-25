@@ -13,10 +13,10 @@ public sealed class ConfigInitCommandTests
         {
             var configHome = Path.Combine(root.FullName, "xdg-config");
             var expectedPath = Path.Combine(configHome, "Zakira.Recall", "profiles.json");
-            var projectPath = Path.Combine(GetRepositoryRoot(), "src", "Zakira.Recall.Tool", "Zakira.Recall.Tool.csproj");
+            var toolDllPath = GetToolDllPath();
             using var process = new Process
             {
-                StartInfo = new ProcessStartInfo("dotnet", $"run --project \"{projectPath}\" -- config init")
+                StartInfo = new ProcessStartInfo("dotnet", $"\"{toolDllPath}\" config init")
                 {
                     WorkingDirectory = GetRepositoryRoot(),
                     RedirectStandardOutput = true,
@@ -48,10 +48,10 @@ public sealed class ConfigInitCommandTests
         try
         {
             var explicitPath = Path.Combine(root.FullName, "custom", "profiles.json");
-            var projectPath = Path.Combine(GetRepositoryRoot(), "src", "Zakira.Recall.Tool", "Zakira.Recall.Tool.csproj");
+            var toolDllPath = GetToolDllPath();
             using var process = new Process
             {
-                StartInfo = new ProcessStartInfo("dotnet", $"run --project \"{projectPath}\" -- config init --path \"{explicitPath}\"")
+                StartInfo = new ProcessStartInfo("dotnet", $"\"{toolDllPath}\" config init --path \"{explicitPath}\"")
                 {
                     WorkingDirectory = GetRepositoryRoot(),
                     RedirectStandardOutput = true,
@@ -73,6 +73,38 @@ public sealed class ConfigInitCommandTests
         {
             root.Delete(true);
         }
+    }
+
+    [Fact]
+    public async Task Providers_List_Returns_Capabilities_As_Json()
+    {
+        var toolDllPath = GetToolDllPath();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet", $"\"{toolDllPath}\" providers list --output json")
+            {
+                WorkingDirectory = GetRepositoryRoot(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            }
+        };
+
+        process.Start();
+        var standardOutput = await process.StandardOutput.ReadToEndAsync();
+        var standardError = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        Assert.True(process.ExitCode == 0, $"providers list failed.{Environment.NewLine}{standardOutput}{Environment.NewLine}{standardError}");
+        Assert.Contains("duckduckgo", standardOutput, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("capabilities", standardOutput, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetToolDllPath()
+    {
+        var toolDllPath = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin", "Debug", "net10.0", "Zakira.Recall.Tool.dll");
+        Assert.True(File.Exists(toolDllPath), $"Expected tool DLL '{toolDllPath}' to exist.");
+        return toolDllPath;
     }
 
     private static string GetRepositoryRoot([CallerFilePath] string filePath = "")

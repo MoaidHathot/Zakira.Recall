@@ -57,6 +57,49 @@ public sealed class DuckDuckGoSearchProviderTests
         Assert.Equal("https://example.com/post", results[0].Url);
     }
 
+    [Fact]
+    public async Task SearchAsync_Maps_Page_TimeRange_And_SafeSearch()
+    {
+        Uri? requestedUri = null;
+        var handler = new DelegatingHandlerStub((request, cancellationToken) =>
+        {
+            requestedUri = request.RequestUri;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("<html><body></body></html>")
+            });
+        });
+        var client = new HttpClient(handler);
+        var provider = new DuckDuckGoSearchProvider(client);
+
+        await provider.SearchAsync(
+            new SearchRequest
+            {
+                Query = "Moaid Hathot",
+                MaxResults = 5,
+                Page = 3,
+                TimeRange = "month",
+                SafeSearch = false
+            },
+            new ProfileDescriptor
+            {
+                Name = "default",
+                UserDataDir = "ignored",
+                Channel = "msedge",
+                Headless = true,
+                DefaultProvider = "duckduckgo",
+                TimeoutSeconds = 5,
+                MaxConcurrentFetches = 3,
+                EnableProviderFallback = true,
+                ProviderHealthCooldownSeconds = 300
+            });
+
+        Assert.NotNull(requestedUri);
+        Assert.Contains("df=m", requestedUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("kp=-1", requestedUri.Query, StringComparison.Ordinal);
+        Assert.Contains("s=10", requestedUri.Query, StringComparison.Ordinal);
+    }
+
     private sealed class DelegatingHandlerStub(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

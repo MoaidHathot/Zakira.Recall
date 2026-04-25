@@ -9,12 +9,20 @@ public sealed class BingSearchProvider(IBrowserSessionFactory browserSessionFact
 {
     public string Name => "bing";
 
+    public SearchProviderCapabilities Capabilities => new()
+    {
+        SupportsPagination = true,
+        SupportsTimeRange = false,
+        SupportsSafeSearch = true,
+        RequiresBrowser = true,
+        SupportsInteractiveSetup = true
+    };
+
     public async ValueTask<IReadOnlyList<SearchResult>> SearchAsync(SearchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
         await using var context = await browserSessionFactory.CreateContextAsync(profile, cancellationToken);
         var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync();
-        var encodedQuery = Uri.EscapeDataString(request.Query);
-        await page.GotoAsync($"https://www.bing.com/search?q={encodedQuery}", new PageGotoOptions
+        await page.GotoAsync(BuildSearchUrl(request), new PageGotoOptions
         {
             WaitUntil = WaitUntilState.DOMContentLoaded,
             Timeout = profile.TimeoutSeconds * 1000
@@ -51,5 +59,26 @@ public sealed class BingSearchProvider(IBrowserSessionFactory browserSessionFact
         }
 
         return results;
+    }
+
+    private static string BuildSearchUrl(SearchRequest request)
+    {
+        var parameters = new List<string>
+        {
+            $"q={Uri.EscapeDataString(request.Query)}",
+            $"count={Math.Max(1, request.MaxResults)}"
+        };
+
+        if (request.Page > 1)
+        {
+            parameters.Add($"first={((request.Page - 1) * Math.Max(1, request.MaxResults)) + 1}");
+        }
+
+        if (request.SafeSearch.HasValue)
+        {
+            parameters.Add($"adlt={(request.SafeSearch.Value ? "strict" : "off")}");
+        }
+
+        return $"https://www.bing.com/search?{string.Join("&", parameters)}";
     }
 }

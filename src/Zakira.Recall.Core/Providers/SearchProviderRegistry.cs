@@ -18,5 +18,7 @@ public sealed class SearchProviderRegistry(IEnumerable<ISearchProvider> provider
         throw new InvalidOperationException($"Unknown provider '{providerName}'. Available providers: {string.Join(", ", GetProviderNames())}");
     }
 
+    public IReadOnlyList<ISearchProvider> GetProviders() => _providers.Values.OrderBy(static provider => provider.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+
     public IReadOnlyList<string> GetProviderNames() => _providers.Keys.OrderBy(static name => name, StringComparer.OrdinalIgnoreCase).ToArray();
 }

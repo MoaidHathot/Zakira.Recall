@@ -15,4 +15,8 @@ public sealed class SearchRequest
     public string? TimeRange { get; init; }
 
     public bool? SafeSearch { get; init; }
+
+    public bool? EnableFallback { get; init; }
+
+    public IReadOnlyList<string> FallbackProviders { get; init; } = [];
 }

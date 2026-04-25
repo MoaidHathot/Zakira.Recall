@@ -16,5 +16,15 @@ public sealed class RecallProfileConfig
 
     public int? TimeoutSeconds { get; init; }
 
+    public IReadOnlyList<string> FallbackProviders { get; init; } = [];
+
+    public bool? EnableProviderFallback { get; init; }
+
+    public int? ProviderHealthCooldownSeconds { get; init; }
+
+    public int? MaxConcurrentFetches { get; init; }
+
+    public string? LogLevel { get; init; }
+
     public Dictionary<string, string> Metadata { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 }

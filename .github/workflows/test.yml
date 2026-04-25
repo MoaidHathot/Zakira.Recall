@@ -8,7 +8,14 @@ on:
 
 jobs:
   test:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
 
     steps:
       - name: Checkout
@@ -20,10 +27,10 @@ jobs:
           global-json-file: global.json
 
       - name: Restore
-        run: dotnet restore .\Zakira.Recall.slnx
+        run: dotnet restore ./Zakira.Recall.slnx
 
       - name: Build
-        run: dotnet build .\Zakira.Recall.slnx --configuration Release --no-restore
+        run: dotnet build ./Zakira.Recall.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test .\Zakira.Recall.slnx --configuration Release --no-build
+        run: dotnet test ./Zakira.Recall.slnx --configuration Release --no-build

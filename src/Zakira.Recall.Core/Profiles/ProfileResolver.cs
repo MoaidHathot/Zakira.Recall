@@ -30,7 +30,12 @@ public sealed class ProfileResolver(
             Headless = profile?.Headless ?? true,
             Locale = profile?.Locale,
             TimeoutSeconds = Math.Clamp(profile?.TimeoutSeconds ?? 30, 5, 300),
-            UserDataDir = userDataDir
+            UserDataDir = userDataDir,
+            FallbackProviders = ResolveFallbackProviders(config, profile, defaultProvider),
+            EnableProviderFallback = profile?.EnableProviderFallback ?? config.EnableProviderFallback ?? true,
+            ProviderHealthCooldownSeconds = Math.Clamp(profile?.ProviderHealthCooldownSeconds ?? config.ProviderHealthCooldownSeconds ?? 300, 1, 3600),
+            MaxConcurrentFetches = Math.Clamp(profile?.MaxConcurrentFetches ?? config.MaxConcurrentFetches ?? 3, 1, 16),
+            LogLevel = profile?.LogLevel ?? config.LogLevel
         };
     }
 
@@ -80,9 +85,25 @@ public sealed class ProfileResolver(
         {
             "ddg" => "duckduckgo",
             "duckduckgo" => "duckduckgo",
+            "duckduckgo-browser" => "duckduckgo-browser",
             "bing" => "bing",
             _ => provider.Trim().ToLowerInvariant()
         };
+    }
+
+    private static IReadOnlyList<string> ResolveFallbackProviders(RecallConfig config, RecallProfileConfig? profile, string defaultProvider)
+    {
+        var providers = profile?.FallbackProviders.Count > 0
+            ? profile.FallbackProviders
+            : config.FallbackProviders;
+
+        return providers
+            .Select(NormalizeProvider)
+            .Where(static provider => !string.IsNullOrWhiteSpace(provider))
+            .Cast<string>()
+            .Where(provider => !string.Equals(provider, defaultProvider, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static string NormalizeChannel(string? channel)

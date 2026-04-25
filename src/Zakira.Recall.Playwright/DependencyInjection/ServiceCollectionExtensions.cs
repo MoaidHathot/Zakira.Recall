@@ -14,6 +14,7 @@ public static class ServiceCollectionExtensions
         services.AddHttpClient<DuckDuckGoSearchProvider>();
         services.AddSingleton<IPageFetcher, PlaywrightPageFetcher>();
         services.AddSingleton<ISearchProvider, DuckDuckGoSearchProvider>();
+        services.AddSingleton<ISearchProvider, DuckDuckGoBrowserSearchProvider>();
         services.AddSingleton<ISearchProvider, BingSearchProvider>();
         return services;
     }

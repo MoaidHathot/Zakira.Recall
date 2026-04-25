@@ -11,4 +11,16 @@ public sealed class ResearchRequest
     public int MaxResults { get; init; } = 8;
 
     public int TopPagesToRead { get; init; } = 3;
+
+    public int Page { get; init; } = 1;
+
+    public string? TimeRange { get; init; }
+
+    public bool? SafeSearch { get; init; }
+
+    public bool? EnableFallback { get; init; }
+
+    public IReadOnlyList<string> FallbackProviders { get; init; } = [];
+
+    public int? MaxConcurrentFetches { get; init; }
 }

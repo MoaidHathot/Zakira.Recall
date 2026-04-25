@@ -4,7 +4,7 @@ using Zakira.Recall.Abstractions.Services;
 
 namespace Zakira.Recall.Core.Configuration;
 
-public sealed class RecallConfigLoader(IRecallConfigLocator locator, RuntimeDefaults runtimeDefaults) : IRecallConfigLoader
+public sealed class RecallConfigLoader(IRecallConfigLocator locator, RuntimeDefaults runtimeDefaults, IRecallConfigValidator validator) : IRecallConfigLoader
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
@@ -31,12 +31,20 @@ public sealed class RecallConfigLoader(IRecallConfigLocator locator, RuntimeDefa
             config = await JsonSerializer.DeserializeAsync<RecallConfig>(stream, SerializerOptions, cancellationToken) ?? new RecallConfig();
         }
 
-        return new RecallConfig
+        var merged = new RecallConfig
         {
             DefaultProvider = runtimeDefaults.DefaultProvider ?? config.DefaultProvider,
             DefaultProfile = runtimeDefaults.DefaultProfile ?? config.DefaultProfile,
             ProfilesRoot = runtimeDefaults.ProfilesRoot ?? config.ProfilesRoot,
+            FallbackProviders = config.FallbackProviders,
+            EnableProviderFallback = config.EnableProviderFallback,
+            ProviderHealthCooldownSeconds = config.ProviderHealthCooldownSeconds,
+            MaxConcurrentFetches = config.MaxConcurrentFetches,
+            LogLevel = runtimeDefaults.LogLevel ?? config.LogLevel,
             Profiles = config.Profiles
         };
+
+        validator.Validate(merged);
+        return merged;
     }
 }
