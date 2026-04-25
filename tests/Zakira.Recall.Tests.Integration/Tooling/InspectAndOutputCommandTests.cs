@@ -119,9 +119,24 @@ public sealed class InspectAndOutputCommandTests
 
     private static string GetToolDllPath()
     {
-        var toolDllPath = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin", "Debug", "net10.0", "Zakira.Recall.Tool.dll");
+        var outputPath = GetToolOutputPath();
+        var toolDllPath = Path.Combine(outputPath, "Zakira.Recall.Tool.dll");
         Assert.True(File.Exists(toolDllPath), $"Expected tool DLL '{toolDllPath}' to exist.");
         return toolDllPath;
+    }
+
+    private static string GetToolOutputPath()
+    {
+        var binRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin");
+        var candidates = new[]
+        {
+            Path.Combine(binRoot, "Release", "net10.0"),
+            Path.Combine(binRoot, "Debug", "net10.0")
+        };
+
+        var outputPath = candidates.FirstOrDefault(Directory.Exists);
+        Assert.True(outputPath is not null, $"Expected tool output directory under '{binRoot}' to exist.");
+        return outputPath!;
     }
 
     private static string GetRepositoryRoot([CallerFilePath] string filePath = "")
