@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>0.2.0</Version>
+    <ZakiraRecallTempRoot>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine($([System.IO.Path]::GetTempPath()), 'Zakira.Recall'))))/</ZakiraRecallTempRoot>
     <Authors>Moaid Hathot</Authors>
     <Company>Zakira</Company>
     <Product>Zakira.Recall</Product>
@@ -16,8 +17,8 @@
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <NoWarn>$(NoWarn);1591;NU1507</NoWarn>
     <PlaywrightPlatform>none</PlaywrightPlatform>
-    <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">$(TEMP)\Zakira.Recall\obj\$(MSBuildProjectName)\</BaseIntermediateOutputPath>
-    <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">$(TEMP)\Zakira.Recall\bin\</BaseOutputPath>
+    <BaseIntermediateOutputPath Condition="'$(BaseIntermediateOutputPath)' == ''">$(ZakiraRecallTempRoot)obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">$(ZakiraRecallTempRoot)bin/</BaseOutputPath>
     <DefaultItemExcludes>$(DefaultItemExcludes);**\obj\**;**\bin\**</DefaultItemExcludes>
   </PropertyGroup>
 </Project>
