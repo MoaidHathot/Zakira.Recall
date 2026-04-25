@@ -16,12 +16,31 @@ internal static class ServiceErrors
         };
 
     private static bool IsTransient(Exception exception)
-        => exception switch
+    {
+        for (var current = exception; current is not null; current = current.InnerException!)
         {
-            TimeoutException => true,
-            HttpRequestException httpException => httpException.StatusCode is null or >= HttpStatusCode.InternalServerError,
-            TaskCanceledException => true,
-            _ when exception.GetType().FullName is "Microsoft.Playwright.PlaywrightException" => true,
-            _ => false
-        };
+            switch (current)
+            {
+                case TimeoutException:
+                    return true;
+                case HttpRequestException httpException when httpException.StatusCode is null or >= HttpStatusCode.InternalServerError:
+                    return true;
+                case TaskCanceledException:
+                    return true;
+            }
+
+            if (current.GetType().FullName is "Microsoft.Playwright.PlaywrightException")
+            {
+                return true;
+            }
+
+            if (!string.IsNullOrWhiteSpace(current.Message)
+                && current.Message.Contains("Target page, context or browser has been closed", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

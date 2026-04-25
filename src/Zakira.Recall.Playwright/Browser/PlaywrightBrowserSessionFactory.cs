@@ -7,10 +7,12 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
 {
     private IPlaywright? _playwright;
     private static readonly string InstallScriptPath = Path.Combine(AppContext.BaseDirectory, "playwright.ps1");
+    private static readonly string HeadlessSessionsRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "browser-sessions");
 
     public async ValueTask<IBrowserContext> CreateContextAsync(ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
-        Directory.CreateDirectory(profile.UserDataDir);
+        var userDataDir = ResolveUserDataDir(profile);
+        Directory.CreateDirectory(userDataDir);
 
         try
         {
@@ -32,7 +34,13 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             IgnoreHTTPSErrors = false
         };
 
-        return await browserType.LaunchPersistentContextAsync(profile.UserDataDir, options);
+        var context = await browserType.LaunchPersistentContextAsync(userDataDir, options);
+        if (profile.Headless)
+        {
+            context.Close += (_, _) => SafeDeleteDirectory(userDataDir);
+        }
+
+        return context;
     }
 
     public async ValueTask DisposeAsync()
@@ -45,4 +53,29 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
         => File.Exists(InstallScriptPath)
             ? $"Playwright runtime is not installed. Run `pwsh \"{InstallScriptPath}\" install chromium` and retry."
             : "Playwright runtime is not installed. Rebuild the CLI so Playwright runtime files are copied next to the executable, then run `pwsh <output-dir>/playwright.ps1 install chromium` and retry.";
+
+    private static string ResolveUserDataDir(ProfileDescriptor profile)
+        => profile.Headless
+            ? Path.Combine(HeadlessSessionsRoot, profile.Name, Guid.NewGuid().ToString("N"))
+            : profile.UserDataDir;
+
+    internal static string GetUserDataDirForProfile(ProfileDescriptor profile)
+        => ResolveUserDataDir(profile);
+
+    private static void SafeDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 }

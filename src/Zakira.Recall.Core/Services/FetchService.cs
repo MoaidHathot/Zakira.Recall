@@ -10,24 +10,53 @@ public sealed class FetchService(IProfileResolver profileResolver, IPageFetcher 
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Url);
 
+        var normalizedUrl = NormalizeUrl(request.Url);
+        var normalizedRequest = new FetchRequest
+        {
+            Url = normalizedUrl,
+            Profile = request.Profile,
+            TimeoutSeconds = request.TimeoutSeconds
+        };
+
         var profile = await profileResolver.ResolveAsync(request.Profile, providerOverride: null, cancellationToken);
         try
         {
-            FetchServiceLogging.FetchStarting(logger, request.Url, profile.Name);
-            var response = await pageFetcher.FetchAsync(request, profile, cancellationToken);
-            FetchServiceLogging.FetchSucceeded(logger, request.Url);
+            FetchServiceLogging.FetchStarting(logger, normalizedUrl, profile.Name);
+            var response = await pageFetcher.FetchAsync(normalizedRequest, profile, cancellationToken);
+            FetchServiceLogging.FetchSucceeded(logger, normalizedUrl);
             return response;
         }
         catch (Exception ex)
         {
-            FetchServiceLogging.FetchFailed(logger, ex, request.Url);
+            FetchServiceLogging.FetchFailed(logger, ex, normalizedUrl);
             return new FetchResponse
             {
-                Url = request.Url,
-                FinalUrl = request.Url,
+                Url = normalizedUrl,
+                FinalUrl = normalizedUrl,
                 Success = false,
-                Error = ServiceErrors.FromException("fetch_failed", ex.Message, ex, target: request.Url)
+                Error = ServiceErrors.FromException("fetch_failed", ex.Message, ex, target: normalizedUrl)
             };
         }
+    }
+
+    internal static string NormalizeUrl(string url)
+    {
+        var trimmed = url.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absoluteUri))
+        {
+            return absoluteUri.ToString();
+        }
+
+        if (trimmed.StartsWith("//", StringComparison.Ordinal))
+        {
+            return $"https:{trimmed}";
+        }
+
+        if (Uri.TryCreate($"https://{trimmed}", UriKind.Absolute, out var httpsUri))
+        {
+            return httpsUri.ToString();
+        }
+
+        return trimmed;
     }
 }
