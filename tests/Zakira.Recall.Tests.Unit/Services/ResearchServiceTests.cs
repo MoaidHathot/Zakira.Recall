@@ -46,19 +46,71 @@ public sealed class ResearchServiceTests
         Assert.Contains(response.Sources, source => !source.Fetch.Success && source.Fetch.Error is not null);
     }
 
-    private sealed class FakeSearchService : ISearchService
+    [Fact]
+    public async Task Dedupes_Equivalent_Urls_Before_Fetching()
+    {
+        var searchService = new FakeSearchService(results:
+        [
+            CreateResult(1, "https://example.com/post"),
+            CreateResult(2, "https://example.com/post/"),
+            CreateResult(3, "https://contoso.com/post")
+        ]);
+        var fetchService = new FakeFetchService();
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        var response = await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "mcp web search",
+            TopPagesToRead = 3
+        });
+
+        Assert.Equal(2, response.Sources.Count);
+        Assert.Equal(2, fetchService.RequestedUrls.Count);
+        Assert.Contains("https://example.com/post", fetchService.RequestedUrls);
+        Assert.DoesNotContain("https://example.com/post/", fetchService.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task Prefers_Unique_Domains_When_Selecting_Top_Pages()
+    {
+        var searchService = new FakeSearchService(results:
+        [
+            CreateResult(1, "https://example.com/1"),
+            CreateResult(2, "https://example.com/2"),
+            CreateResult(3, "https://contoso.com/1")
+        ]);
+        var fetchService = new FakeFetchService();
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "mcp web search",
+            TopPagesToRead = 2,
+            EnforceDomainDiversity = true
+        });
+
+        Assert.Equal([
+            "https://example.com/1",
+            "https://contoso.com/1"
+        ], fetchService.RequestedUrls);
+    }
+
+    private static SearchResult CreateResult(int rank, string url)
+        => new()
+        {
+            Title = $"Result {rank}",
+            Url = url,
+            Provider = "duckduckgo",
+            Rank = rank,
+            Snippet = $"Snippet {rank}"
+        };
+
+    private sealed class FakeSearchService(IReadOnlyList<SearchResult>? results = null) : ISearchService
     {
         public ValueTask<SearchResponse> SearchAsync(SearchRequest request, CancellationToken cancellationToken = default)
         {
-            var results = Enumerable.Range(1, request.MaxResults)
-                .Select(index => new SearchResult
-                {
-                    Title = $"Result {index}",
-                    Url = $"https://example.com/{index}",
-                    Provider = "duckduckgo",
-                    Rank = index,
-                    Snippet = $"Snippet {index}"
-                })
+            var responseResults = results ?? Enumerable.Range(1, request.MaxResults)
+                .Select(index => CreateResult(index, $"https://example.com/{index}"))
                 .ToArray();
 
             return ValueTask.FromResult(new SearchResponse
@@ -67,7 +119,7 @@ public sealed class ResearchServiceTests
                 Provider = "duckduckgo",
                 Profile = request.Profile ?? "default",
                 Success = true,
-                Results = results
+                Results = responseResults
             });
         }
     }

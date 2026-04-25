@@ -26,7 +26,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             FallbackProviders = request.FallbackProviders
         }, cancellationToken);
 
-        var topResults = searchResponse.Results.Take(Math.Clamp(request.TopPagesToRead, 1, Math.Max(1, searchResponse.Results.Count))).ToArray();
+        var topResults = SelectResults(searchResponse.Results, request.TopPagesToRead, request.EnforceDomainDiversity);
         var errors = new List<OperationError>();
         if (searchResponse.Error is not null)
         {
@@ -117,6 +117,90 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             Citations = citations,
             Errors = errors
         };
+    }
+
+    private static SearchResult[] SelectResults(IReadOnlyList<SearchResult> results, int topPagesToRead, bool enforceDomainDiversity)
+    {
+        var targetCount = Math.Clamp(topPagesToRead, 1, Math.Max(1, results.Count));
+        var uniqueResults = DedupeResults(results);
+        if (!enforceDomainDiversity)
+        {
+            return uniqueResults.Take(targetCount).ToArray();
+        }
+
+        var selected = new List<SearchResult>(Math.Min(targetCount, uniqueResults.Count));
+        var usedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var result in uniqueResults)
+        {
+            var domain = TryGetDomain(result.Url);
+            if (!string.IsNullOrWhiteSpace(domain) && !usedDomains.Add(domain))
+            {
+                continue;
+            }
+
+            selected.Add(result);
+            if (selected.Count == targetCount)
+            {
+                return selected.ToArray();
+            }
+        }
+
+        foreach (var result in uniqueResults)
+        {
+            if (selected.Count == targetCount)
+            {
+                break;
+            }
+
+            if (!selected.Contains(result))
+            {
+                selected.Add(result);
+            }
+        }
+
+        return selected.ToArray();
+    }
+
+    private static List<SearchResult> DedupeResults(IReadOnlyList<SearchResult> results)
+    {
+        var uniqueResults = new List<SearchResult>(results.Count);
+        var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var result in results)
+        {
+            var normalizedUrl = NormalizeResultUrl(result.Url);
+            if (!seenUrls.Add(normalizedUrl))
+            {
+                continue;
+            }
+
+            uniqueResults.Add(result);
+        }
+
+        return uniqueResults;
+    }
+
+    private static string NormalizeResultUrl(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return url.Trim();
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Fragment = string.Empty,
+            Host = uri.Host.ToLowerInvariant()
+        };
+
+        if ((builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443)
+            || (builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80))
+        {
+            builder.Port = -1;
+        }
+
+        var normalized = builder.Uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        return string.IsNullOrWhiteSpace(normalized) ? builder.Uri.GetLeftPart(UriPartial.Path) : normalized;
     }
 
     private static string? TryGetDomain(string? url)

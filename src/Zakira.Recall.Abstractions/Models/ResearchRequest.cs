@@ -23,4 +23,6 @@ public sealed class ResearchRequest
     public IReadOnlyList<string> FallbackProviders { get; init; } = [];
 
     public int? MaxConcurrentFetches { get; init; }
+
+    public bool EnforceDomainDiversity { get; init; } = true;
 }

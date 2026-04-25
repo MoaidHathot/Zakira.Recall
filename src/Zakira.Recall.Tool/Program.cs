@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.ComponentModel;
 using System.Text.Json;
+using Dumpify;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -151,6 +152,7 @@ internal static class ZakiraRecallProgram
         var fallbackOption = CreateStringOption("--fallback", "Provider fallback override: true or false.");
         var fallbackProvidersOption = CreateStringListOption("--fallback-provider", "Fallback provider name.");
         var concurrencyOption = CreateIntOption("--max-concurrent-fetches", "Maximum number of parallel fetches.");
+        var domainDiversityOption = CreateStringOption("--domain-diversity", "Prefer unique domains when selecting pages to fetch: true or false.");
         var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
 
         command.Add(queryArgument);
@@ -164,6 +166,7 @@ internal static class ZakiraRecallProgram
         command.Add(fallbackOption);
         command.Add(fallbackProvidersOption);
         command.Add(concurrencyOption);
+        command.Add(domainDiversityOption);
         command.Add(outputOption);
         command.SetAction(async (parseResult, cancellationToken) =>
         {
@@ -181,7 +184,8 @@ internal static class ZakiraRecallProgram
                 SafeSearch = ParseNullableBool(parseResult.GetValue(safeSearchOption), "--safe-search"),
                 EnableFallback = ParseNullableBool(parseResult.GetValue(fallbackOption), "--fallback"),
                 FallbackProviders = parseResult.GetValue(fallbackProvidersOption) ?? [],
-                MaxConcurrentFetches = parseResult.GetValue(concurrencyOption)
+                MaxConcurrentFetches = parseResult.GetValue(concurrencyOption),
+                EnforceDomainDiversity = ParseNullableBool(parseResult.GetValue(domainDiversityOption), "--domain-diversity") ?? true
             }, cancellationToken);
 
             WriteOutput(response, parseResult.GetValue(outputOption), "json");
@@ -201,6 +205,9 @@ internal static class ZakiraRecallProgram
         var listCommand = new Command("list", "List available providers and health state.");
         var profileOption = CreateStringOption("--profile", "Profile name.");
         var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
+        var showCommand = new Command("show", "Show the resolved configuration.");
+        var showPathOption = CreateStringOption("--path", "Explicit config path.");
+        var showOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         listCommand.Add(profileOption);
         listCommand.Add(outputOption);
@@ -237,6 +244,7 @@ internal static class ZakiraRecallProgram
     {
         var command = new Command("config", "Manage configuration.");
         var initCommand = new Command("init", "Write an initial config file.");
+        var showCommand = new Command("show", "Show the resolved configuration.");
         var pathOption = CreateStringOption("--path", "Output config path.");
         var profileOption = CreateStringOption("--profile", "Default profile name.");
         var interactiveProfileOption = CreateStringOption("--interactive-profile", "Interactive profile name.");
@@ -250,6 +258,8 @@ internal static class ZakiraRecallProgram
         var concurrencyOption = CreateIntOption("--max-concurrent-fetches", "Maximum number of parallel page fetches.");
         var configLogLevelOption = CreateStringOption("--config-log-level", "Default config log level.");
         var outputOption = CreateStringOption("--output", "Output mode: text or json.");
+        var showPathOption = CreateStringOption("--path", "Explicit config path.");
+        var showOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         initCommand.Add(pathOption);
         initCommand.Add(profileOption);
@@ -340,7 +350,19 @@ internal static class ZakiraRecallProgram
             return 0;
         });
 
+        showCommand.Add(showPathOption);
+        showCommand.Add(showOutputOption);
+        showCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
+            var loader = host.Services.GetRequiredService<IRecallConfigLoader>();
+            var config = await loader.LoadAsync(parseResult.GetValue(showPathOption), cancellationToken);
+            WriteOutput(config, parseResult.GetValue(showOutputOption), "json");
+            return 0;
+        });
+
         command.Add(initCommand);
+        command.Add(showCommand);
         return command;
     }
 
@@ -404,6 +426,10 @@ internal static class ZakiraRecallProgram
         var authProviderOption = CreateStringOption("--provider", "Provider override.");
         var authUrlOption = CreateStringOption("--url", "Optional URL to open for manual setup.");
         var authOutputOption = CreateStringOption("--output", "Output mode: text or json.");
+        var showCommand = new Command("show", "Show a resolved profile.");
+        var showNameArgument = CreateOptionalArgument<string?>("name", "Profile name.");
+        var showProviderOption = CreateStringOption("--provider", "Provider override.");
+        var showOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         authCommand.Add(authNameArgument);
         authCommand.Add(authProviderOption);
@@ -427,8 +453,22 @@ internal static class ZakiraRecallProgram
             return 0;
         });
 
+        showCommand.Add(showNameArgument);
+        showCommand.Add(showProviderOption);
+        showCommand.Add(showOutputOption);
+        showCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var selectedProfile = parseResult.GetValue(showNameArgument);
+            using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, selectedProfile));
+            var resolver = host.Services.GetRequiredService<IProfileResolver>();
+            var profile = await resolver.ResolveAsync(selectedProfile, parseResult.GetValue(showProviderOption), cancellationToken);
+            WriteOutput(profile, parseResult.GetValue(showOutputOption), "json");
+            return 0;
+        });
+
         command.Add(initCommand);
         command.Add(authCommand);
+        command.Add(showCommand);
         return command;
     }
 
@@ -607,6 +647,7 @@ internal static class ZakiraRecallProgram
         var normalizedMode = NormalizeOutputMode(mode, defaultMode);
         var text = normalizedMode switch
         {
+            "dump" => value.DumpText(),
             "json" => JsonSerializer.Serialize(value, JsonSupport.Options),
             "markdown" => FormatMarkdown(value),
             _ => FormatText(value)
@@ -623,6 +664,8 @@ internal static class ZakiraRecallProgram
 
         return mode.Trim().ToLowerInvariant() switch
         {
+            "dump" => "dump",
+            "dumpify" => "dump",
             "json" => "json",
             "markdown" => "markdown",
             "md" => "markdown",
@@ -640,8 +683,10 @@ internal static class ZakiraRecallProgram
             FetchResponse response => $"Fetch failed: {response.Error?.Message}",
             ResearchResponse response when response.Citations.Count > 0 => string.Join(Environment.NewLine + Environment.NewLine, response.Citations.Select(citation => $"[{citation.Id}] {citation.Title}{Environment.NewLine}{citation.Url}{Environment.NewLine}{citation.Quote}".TrimEnd())),
             ResearchResponse response => response.Errors.FirstOrDefault()?.Message ?? "No research sources.",
+            RecallConfig config => $"Default profile: {config.DefaultProfile ?? "default"}{Environment.NewLine}Default provider: {config.DefaultProvider ?? "duckduckgo"}{Environment.NewLine}Profiles: {config.Profiles.Count}",
             ProfileDescriptor profile => $"Profile: {profile.Name}{Environment.NewLine}Provider: {profile.DefaultProvider}{Environment.NewLine}Channel: {profile.Channel}{Environment.NewLine}Headless: {profile.Headless}{Environment.NewLine}User data: {profile.UserDataDir}",
             SearchProviderDescriptor[] providers => string.Join(Environment.NewLine, providers.Select(provider => $"{provider.Name} | browser={provider.Capabilities.RequiresBrowser} | pagination={provider.Capabilities.SupportsPagination} | timeRange={provider.Capabilities.SupportsTimeRange} | safeSearch={provider.Capabilities.SupportsSafeSearch} | healthy={provider.Health?.IsHealthy}")),
+            ProviderHealthSnapshot snapshot => $"Provider: {snapshot.Provider}{Environment.NewLine}Healthy: {snapshot.IsHealthy}{Environment.NewLine}Failures: {snapshot.ConsecutiveFailures}",
             _ => JsonSerializer.Serialize(value, JsonSupport.Options)
         };
 
@@ -652,7 +697,10 @@ internal static class ZakiraRecallProgram
             FetchResponse response when response.Success => $"# {response.Title ?? response.FinalUrl}{Environment.NewLine}{Environment.NewLine}{response.Text}",
             FetchResponse response => $"# Fetch Failed{Environment.NewLine}{Environment.NewLine}{response.Error?.Message}",
             ResearchResponse response => string.Join(Environment.NewLine + Environment.NewLine, response.Citations.Select(citation => $"## {citation.Id}: [{citation.Title}]({citation.Url}){Environment.NewLine}{Environment.NewLine}{citation.Quote}".TrimEnd())),
+            RecallConfig config => $"# Config{Environment.NewLine}{Environment.NewLine}- Default profile: `{config.DefaultProfile ?? "default"}`{Environment.NewLine}- Default provider: `{config.DefaultProvider ?? "duckduckgo"}`{Environment.NewLine}- Profiles: {config.Profiles.Count}",
+            ProfileDescriptor profile => $"# Profile `{profile.Name}`{Environment.NewLine}{Environment.NewLine}- Provider: `{profile.DefaultProvider}`{Environment.NewLine}- Channel: `{profile.Channel}`{Environment.NewLine}- Headless: `{profile.Headless}`{Environment.NewLine}- User data: `{profile.UserDataDir}`",
             SearchProviderDescriptor[] providers => string.Join(Environment.NewLine, providers.Select(provider => $"- `{provider.Name}`: browser={provider.Capabilities.RequiresBrowser}, pagination={provider.Capabilities.SupportsPagination}, timeRange={provider.Capabilities.SupportsTimeRange}, safeSearch={provider.Capabilities.SupportsSafeSearch}, healthy={provider.Health?.IsHealthy}")),
+            ProviderHealthSnapshot snapshot => $"# Provider Health `{snapshot.Provider}`{Environment.NewLine}{Environment.NewLine}- Healthy: `{snapshot.IsHealthy}`{Environment.NewLine}- Consecutive failures: `{snapshot.ConsecutiveFailures}`",
             _ => FormatText(value)
         };
 
@@ -711,10 +759,11 @@ internal sealed class RecallMcpTools(
     IResearchService researchService,
     ISearchProviderRegistry providerRegistry,
     IProviderHealthTracker healthTracker,
-    IProfileResolver profileResolver)
+    IProfileResolver profileResolver,
+    IRecallConfigLoader configLoader)
 {
     [McpServerTool, Description("Search the web using the selected provider or the configured default.")]
-    public async Task<string> WebSearch(
+    public async Task<SearchResponse> WebSearch(
         [Description("The raw search query, including operators such as site: or filetype:.")] string query,
         [Description("Optional provider override, such as duckduckgo, duckduckgo-browser, or bing.")] string? provider = null,
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
@@ -725,7 +774,7 @@ internal sealed class RecallMcpTools(
         [Description("Enable or disable provider fallback.")] bool? enableFallback = null,
         [Description("Optional fallback providers.")] string[]? fallbackProviders = null)
     {
-        var response = await searchService.SearchAsync(new SearchRequest
+        return await searchService.SearchAsync(new SearchRequest
         {
             Query = query,
             Provider = provider,
@@ -737,28 +786,24 @@ internal sealed class RecallMcpTools(
             EnableFallback = enableFallback,
             FallbackProviders = fallbackProviders ?? []
         });
-
-        return JsonSerializer.Serialize(response, JsonSupport.Options);
     }
 
     [McpServerTool, Description("Fetch readable content from a single URL.")]
-    public async Task<string> WebFetch(
+    public async Task<FetchResponse> WebFetch(
         [Description("The URL to open and extract readable text from.")] string url,
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
         [Description("Navigation timeout in seconds.")] int timeoutSeconds = 30)
     {
-        var response = await fetchService.FetchAsync(new FetchRequest
+        return await fetchService.FetchAsync(new FetchRequest
         {
             Url = url,
             Profile = profile,
             TimeoutSeconds = timeoutSeconds
         });
-
-        return JsonSerializer.Serialize(response, JsonSupport.Options);
     }
 
     [McpServerTool, Description("Search the web, fetch top pages, and return a research bundle with structured citations.")]
-    public async Task<string> WebResearch(
+    public async Task<ResearchResponse> WebResearch(
         [Description("The raw research query.")] string query,
         [Description("Optional provider override, such as duckduckgo, duckduckgo-browser, or bing.")] string? provider = null,
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
@@ -769,9 +814,10 @@ internal sealed class RecallMcpTools(
         [Description("Optional safe search override.")] bool? safeSearch = null,
         [Description("Enable or disable provider fallback.")] bool? enableFallback = null,
         [Description("Optional fallback providers.")] string[]? fallbackProviders = null,
-        [Description("Maximum number of concurrent fetches.")] int? maxConcurrentFetches = null)
+        [Description("Maximum number of concurrent fetches.")] int? maxConcurrentFetches = null,
+        [Description("Prefer unique domains when choosing result pages to fetch.")] bool enforceDomainDiversity = true)
     {
-        var response = await researchService.ResearchAsync(new ResearchRequest
+        return await researchService.ResearchAsync(new ResearchRequest
         {
             Query = query,
             Provider = provider,
@@ -783,18 +829,17 @@ internal sealed class RecallMcpTools(
             SafeSearch = safeSearch,
             EnableFallback = enableFallback,
             FallbackProviders = fallbackProviders ?? [],
-            MaxConcurrentFetches = maxConcurrentFetches
+            MaxConcurrentFetches = maxConcurrentFetches,
+            EnforceDomainDiversity = enforceDomainDiversity
         });
-
-        return JsonSerializer.Serialize(response, JsonSupport.Options);
     }
 
     [McpServerTool, Description("List providers with capabilities and current health state.")]
-    public async Task<string> WebListProviders(
+    public async Task<SearchProviderDescriptor[]> WebListProviders(
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null)
     {
         var resolvedProfile = await profileResolver.ResolveAsync(profile, providerOverride: null);
-        var providers = providerRegistry.GetProviders()
+        return providerRegistry.GetProviders()
             .Select(provider => new SearchProviderDescriptor
             {
                 Name = provider.Name,
@@ -802,7 +847,67 @@ internal sealed class RecallMcpTools(
                 Health = healthTracker.GetSnapshot(provider.Name, resolvedProfile.ProviderHealthCooldownSeconds)
             })
             .ToArray();
+    }
 
-        return JsonSerializer.Serialize(providers, JsonSupport.Options);
+    [McpServerTool, Description("Fetch readable content from multiple URLs in one call.")]
+    public async Task<FetchResponse[]> WebBatchFetch(
+        [Description("The URLs to fetch.")] string[] urls,
+        [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
+        [Description("Navigation timeout in seconds.")] int timeoutSeconds = 30)
+    {
+        var tasks = urls.Select(url => fetchService.FetchAsync(new FetchRequest
+        {
+            Url = url,
+            Profile = profile,
+            TimeoutSeconds = timeoutSeconds
+        }).AsTask());
+        return await Task.WhenAll(tasks);
+    }
+
+    [McpServerTool, Description("Search the web, then fetch a selected subset of result URLs.")]
+    public async Task<FetchResponse[]> WebSearchThenFetch(
+        [Description("The raw search query.")] string query,
+        [Description("Zero-based result indexes to fetch from the search response.")] int[] selectedResultIndexes,
+        [Description("Optional provider override.")] string? provider = null,
+        [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
+        [Description("Maximum number of search results to collect.")] int maxResults = 8,
+        [Description("Result page number.")] int page = 1,
+        [Description("Navigation timeout in seconds.")] int timeoutSeconds = 30)
+    {
+        var search = await searchService.SearchAsync(new SearchRequest
+        {
+            Query = query,
+            Provider = provider,
+            Profile = profile,
+            MaxResults = maxResults,
+            Page = page
+        });
+
+        var urls = selectedResultIndexes
+            .Where(index => index >= 0 && index < search.Results.Count)
+            .Select(index => search.Results[index].Url)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return await WebBatchFetch(urls, profile, timeoutSeconds);
+    }
+
+    [McpServerTool, Description("Show the resolved configuration used by Zakira.Recall.")]
+    public async Task<RecallConfig> WebShowConfig()
+        => await configLoader.LoadAsync();
+
+    [McpServerTool, Description("Show the resolved profile after applying config defaults and provider overrides.")]
+    public async Task<ProfileDescriptor> WebShowProfile(
+        [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
+        [Description("Optional provider override.")] string? provider = null)
+        => await profileResolver.ResolveAsync(profile, provider);
+
+    [McpServerTool, Description("Show current health state for a provider.")]
+    public async Task<ProviderHealthSnapshot> WebGetProviderHealth(
+        [Description("Provider name.")] string provider,
+        [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null)
+    {
+        var resolvedProfile = await profileResolver.ResolveAsync(profile, providerOverride: null);
+        return healthTracker.GetSnapshot(provider, resolvedProfile.ProviderHealthCooldownSeconds);
     }
 }

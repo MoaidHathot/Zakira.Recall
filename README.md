@@ -11,8 +11,9 @@ Supports:
 - provider selection and fallback
 - Playwright-backed search and fetch
 - structured citations for research results
-- JSON, text, and Markdown CLI output modes
+- JSON, text, Markdown, and Dumpify CLI output modes
 - interactive browser profile setup for sign-in and consent flows
+- config and profile inspection commands
 
 ## Install
 
@@ -36,10 +37,12 @@ recall search "site:github.com mcp server"
 recall search "playwright mcp" --provider duckduckgo-browser --page 2 --time-range month --safe-search false
 recall fetch "https://example.com"
 recall fetch "https://example.com" --output markdown
-recall research "best local mcp web search tools"
-recall research "playwright search providers" --fallback-provider bing --max-concurrent-fetches 4
+recall research "best local mcp web search tools" --domain-diversity true
+recall research "playwright search providers" --fallback-provider bing --max-concurrent-fetches 4 --output dump
 recall config init
+recall config show --output dump
 recall providers list --output json
+recall profile show default --output markdown
 recall profile init default --channel msedge --provider duckduckgo --headless false
 recall profile auth interactive --provider duckduckgo-browser
 recall mcp
@@ -58,6 +61,7 @@ List provider capabilities and current health state:
 ```powershell
 recall providers list
 recall providers list --output json
+recall providers list --output dump
 ```
 
 The browser-backed providers use Playwright and support interactive setup flows.
@@ -120,6 +124,13 @@ Override the output path if needed:
 recall config init --path "C:/temp/recall-profiles.json"
 ```
 
+Inspect the resolved configuration:
+
+```powershell
+recall config show
+recall config show --path "C:/temp/recall-profiles.json" --output dump
+```
+
 Generate a config with fallback providers and logging defaults:
 
 ```powershell
@@ -136,6 +147,13 @@ Useful config fields:
 - `providerHealthCooldownSeconds`
 - `maxConcurrentFetches`
 - `logLevel`
+
+Inspect a resolved profile:
+
+```powershell
+recall profile show
+recall profile show default --provider bing --output markdown
+```
 
 Per-profile fields:
 
@@ -178,7 +196,7 @@ recall search <query> \
   [--safe-search <true|false>] \
   [--fallback <true|false>] \
   [--fallback-provider <name> ...] \
-  [--output <json|text|markdown>]
+  [--output <json|text|markdown|dump>]
 ```
 
 Fetch options:
@@ -187,7 +205,7 @@ Fetch options:
 recall fetch <url> \
   [--profile <name>] \
   [--timeout <seconds>] \
-  [--output <json|text|markdown>]
+  [--output <json|text|markdown|dump>]
 ```
 
 Research options:
@@ -204,7 +222,24 @@ recall research <query> \
   [--fallback <true|false>] \
   [--fallback-provider <name> ...] \
   [--max-concurrent-fetches <n>] \
-  [--output <json|text|markdown>]
+  [--domain-diversity <true|false>] \
+  [--output <json|text|markdown|dump>]
+```
+
+Profile inspection options:
+
+```powershell
+recall profile show [name] \
+  [--provider <name>] \
+  [--output <json|text|markdown|dump>]
+```
+
+Config inspection options:
+
+```powershell
+recall config show \
+  [--path <path>] \
+  [--output <json|text|markdown|dump>]
 ```
 
 Global options:
@@ -224,6 +259,7 @@ CLI commands support multiple output modes:
 - `json`: full structured response
 - `text`: concise terminal-friendly output
 - `markdown`: readable output for notes or LLM workflows
+- `dump`: structured object inspection via Dumpify
 
 Examples:
 
@@ -231,6 +267,7 @@ Examples:
 recall search "mcp server" --output text
 recall fetch "https://example.com" --output markdown
 recall research "playwright search" --output json
+recall providers list --output dump
 ```
 
 ## Research Output
@@ -241,6 +278,11 @@ recall research "playwright search" --output json
 - fetched page content for selected sources
 - structured citations
 - partial errors when some pages fail but others succeed
+
+By default, `research` also:
+
+- deduplicates equivalent result URLs before fetch
+- prefers domain diversity when selecting top pages to read
 
 This makes the tool safer for agent workflows because one failed fetch does not have to fail the whole research run.
 
@@ -258,6 +300,13 @@ The exposed tools are:
 - `WebFetch`
 - `WebResearch`
 - `WebListProviders`
+- `WebBatchFetch`
+- `WebSearchThenFetch`
+- `WebShowConfig`
+- `WebShowProfile`
+- `WebGetProviderHealth`
+
+MCP tools return structured typed results that are easier for agents to consume directly.
 
 `WebSearch` and `WebResearch` support provider selection, paging, time range, safe search, and fallback controls.
 
