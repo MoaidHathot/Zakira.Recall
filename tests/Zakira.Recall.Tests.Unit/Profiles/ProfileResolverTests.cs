@@ -17,21 +17,25 @@ public sealed class ProfileResolverTests
         var tempRoot = Directory.CreateTempSubdirectory();
         try
         {
+            var appData = Path.Combine(tempRoot.FullName, "app-data");
+            var localAppData = Path.Combine(tempRoot.FullName, "local-app-data");
+            var configuredUserDataDir = Path.Combine(tempRoot.FullName, "custom", "work-profile");
             var configPath = Path.Combine(tempRoot.FullName, "profiles.json");
-            await File.WriteAllTextAsync(configPath, """
-            {
-              "defaultProfile": "work",
-              "profiles": {
-                "work": {
-                  "defaultProvider": "bing",
-                  "userDataDir": "D:/custom/work-profile",
-                  "channel": "msedge"
-                }
-              }
-            }
-            """);
+            await File.WriteAllTextAsync(configPath, string.Join(Environment.NewLine,
+            [
+                "{",
+                "  \"defaultProfile\": \"work\",",
+                "  \"profiles\": {",
+                "    \"work\": {",
+                "      \"defaultProvider\": \"bing\",",
+                $"      \"userDataDir\": \"{configuredUserDataDir.Replace("\\", "\\\\")}\",",
+                "      \"channel\": \"msedge\"",
+                "    }",
+                "  }",
+                "}"
+            ]));
 
-            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
+            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), appData, localAppData);
             var runtimeDefaults = new RuntimeDefaults { ConfigPath = configPath };
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
             IRecallConfigValidator validator = new RecallConfigValidator(CreateProviderRegistry());
@@ -42,7 +46,7 @@ public sealed class ProfileResolverTests
 
             Assert.Equal("work", profile.Name);
             Assert.Equal("bing", profile.DefaultProvider);
-            Assert.Equal(Path.GetFullPath("D:/custom/work-profile"), profile.UserDataDir);
+            Assert.Equal(Path.GetFullPath(configuredUserDataDir), profile.UserDataDir);
         }
         finally
         {
@@ -56,6 +60,9 @@ public sealed class ProfileResolverTests
         var tempRoot = Directory.CreateTempSubdirectory();
         try
         {
+            var appData = Path.Combine(tempRoot.FullName, "app-data");
+            var localAppData = Path.Combine(tempRoot.FullName, "local-app-data");
+            var profilesRoot = Path.Combine(tempRoot.FullName, "recall", "profiles");
             var configPath = Path.Combine(tempRoot.FullName, "profiles.json");
             await File.WriteAllTextAsync(configPath, """
             {
@@ -67,12 +74,12 @@ public sealed class ProfileResolverTests
             }
             """);
 
-            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
+            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), appData, localAppData);
             var runtimeDefaults = new RuntimeDefaults
             {
                 ConfigPath = configPath,
                 DefaultProfile = "personal",
-                ProfilesRoot = @"D:\recall\profiles"
+                ProfilesRoot = profilesRoot
             };
 
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
@@ -82,7 +89,7 @@ public sealed class ProfileResolverTests
 
             var profile = await resolver.ResolveAsync("personal", "duckduckgo");
 
-            Assert.Equal(Path.Combine(Path.GetFullPath(@"D:\recall\profiles"), "personal"), profile.UserDataDir);
+            Assert.Equal(Path.Combine(Path.GetFullPath(profilesRoot), "personal"), profile.UserDataDir);
             Assert.Equal("duckduckgo", profile.DefaultProvider);
         }
         finally
@@ -97,6 +104,8 @@ public sealed class ProfileResolverTests
         var tempRoot = Directory.CreateTempSubdirectory();
         try
         {
+            var appData = Path.Combine(tempRoot.FullName, "app-data");
+            var localAppData = Path.Combine(tempRoot.FullName, "local-app-data");
             var configPath = Path.Combine(tempRoot.FullName, "profiles.json");
             await File.WriteAllTextAsync(configPath, """
             {
@@ -104,7 +113,7 @@ public sealed class ProfileResolverTests
             }
             """);
 
-            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
+            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), appData, localAppData);
             var runtimeDefaults = new RuntimeDefaults { ConfigPath = configPath };
             var registry = CreateProviderRegistry();
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
