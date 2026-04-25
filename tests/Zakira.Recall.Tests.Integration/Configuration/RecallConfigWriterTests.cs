@@ -1,5 +1,8 @@
 using Zakira.Recall.Abstractions.Config;
 using Zakira.Recall.Core.Configuration;
+using Zakira.Recall.Core.Providers;
+using Zakira.Recall.Playwright.Browser;
+using Zakira.Recall.Playwright.Providers;
 using Zakira.Recall.Tests.Unit.Infrastructure;
 
 namespace Zakira.Recall.Tests.Integration.Configuration;
@@ -17,7 +20,7 @@ public sealed class RecallConfigWriterTests
                 @"C:\Roaming",
                 @"C:\Local");
             var locator = new RecallConfigLocator(environment);
-            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator());
+            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator(CreateProviderRegistry()));
 
             var path = await writer.SaveAsync(new RecallConfig
             {
@@ -48,7 +51,7 @@ public sealed class RecallConfigWriterTests
                 @"C:\Roaming",
                 @"C:\Local");
             var locator = new RecallConfigLocator(environment);
-            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator());
+            var writer = new RecallConfigWriter(locator, new RuntimeDefaults(), new RecallConfigValidator(CreateProviderRegistry()));
 
             await Assert.ThrowsAsync<InvalidOperationException>(async () =>
             {
@@ -59,5 +62,25 @@ public sealed class RecallConfigWriterTests
         {
             root.Delete(true);
         }
+    }
+
+    private static SearchProviderRegistry CreateProviderRegistry()
+        => new(
+        [
+            new DuckDuckGoSearchProvider(new HttpClient(new StubHandler())),
+            new DuckDuckGoBrowserSearchProvider(new StubBrowserSessionFactory()),
+            new BingSearchProvider(new StubBrowserSessionFactory())
+        ]);
+
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubBrowserSessionFactory : IBrowserSessionFactory
+    {
+        public ValueTask<Microsoft.Playwright.IBrowserContext> CreateContextAsync(Zakira.Recall.Abstractions.Models.ProfileDescriptor profile, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }

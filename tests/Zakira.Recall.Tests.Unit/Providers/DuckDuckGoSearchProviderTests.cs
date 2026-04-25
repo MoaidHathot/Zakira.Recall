@@ -100,6 +100,35 @@ public sealed class DuckDuckGoSearchProviderTests
         Assert.Contains("s=10", requestedUri.Query, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task SearchAsync_Rejects_Non_Ok_Status_Codes()
+    {
+        var handler = new DelegatingHandlerStub((request, cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Accepted)
+            {
+                Content = new StringContent("<html><body></body></html>")
+            }));
+        var client = new HttpClient(handler);
+        var provider = new DuckDuckGoSearchProvider(client);
+
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => provider.SearchAsync(
+            new SearchRequest { Query = "Moaid Hathot", MaxResults = 5 },
+            new ProfileDescriptor
+            {
+                Name = "default",
+                UserDataDir = "ignored",
+                Channel = "msedge",
+                Headless = true,
+                DefaultProvider = "duckduckgo",
+                TimeoutSeconds = 5,
+                MaxConcurrentFetches = 3,
+                EnableProviderFallback = true,
+                ProviderHealthCooldownSeconds = 300
+            }).AsTask());
+
+        Assert.Equal(System.Net.HttpStatusCode.Accepted, exception.StatusCode);
+    }
+
     private sealed class DelegatingHandlerStub(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handler) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

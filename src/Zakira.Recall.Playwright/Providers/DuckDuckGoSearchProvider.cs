@@ -7,6 +7,10 @@ public sealed class DuckDuckGoSearchProvider(HttpClient httpClient) : ISearchPro
 {
     public string Name => "duckduckgo";
 
+    public IReadOnlyList<string> Aliases => ["ddg"];
+
+    public string? SetupUrl => "https://duckduckgo.com";
+
     public SearchProviderCapabilities Capabilities => new()
     {
         SupportsPagination = true,
@@ -21,6 +25,12 @@ public sealed class DuckDuckGoSearchProvider(HttpClient httpClient) : ISearchPro
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(profile.TimeoutSeconds));
         using var response = await httpClient.GetAsync(BuildSearchUri(request), timeoutCts.Token);
+
+        if (response.StatusCode != System.Net.HttpStatusCode.OK)
+        {
+            throw new HttpRequestException($"DuckDuckGo search returned unexpected status code {(int)response.StatusCode}.", null, response.StatusCode);
+        }
+
         response.EnsureSuccessStatusCode();
         var html = await response.Content.ReadAsStringAsync(timeoutCts.Token);
         return DuckDuckGoHtmlParser.ParseResults(html, request.MaxResults);

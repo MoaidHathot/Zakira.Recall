@@ -10,6 +10,8 @@ public sealed class ResearchResponse
 
     public bool Success { get; init; }
 
+    public string? Summary { get; init; }
+
     public IReadOnlyList<SearchResult> SearchResults { get; init; } = [];
 
     public IReadOnlyList<ResearchSource> Sources { get; init; } = [];

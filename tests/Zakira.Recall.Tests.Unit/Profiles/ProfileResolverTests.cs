@@ -2,6 +2,9 @@ using Zakira.Recall.Abstractions.Config;
 using Zakira.Recall.Abstractions.Services;
 using Zakira.Recall.Core.Configuration;
 using Zakira.Recall.Core.Profiles;
+using Zakira.Recall.Core.Providers;
+using Zakira.Recall.Playwright.Browser;
+using Zakira.Recall.Playwright.Providers;
 using Zakira.Recall.Tests.Unit.Infrastructure;
 
 namespace Zakira.Recall.Tests.Unit.Profiles;
@@ -31,9 +34,9 @@ public sealed class ProfileResolverTests
             var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
             var runtimeDefaults = new RuntimeDefaults { ConfigPath = configPath };
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
-            IRecallConfigValidator validator = new RecallConfigValidator();
+            IRecallConfigValidator validator = new RecallConfigValidator(CreateProviderRegistry());
             IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults, validator);
-            var resolver = new ProfileResolver(loader, environment);
+            var resolver = new ProfileResolver(loader, CreateProviderRegistry(), environment);
 
             var profile = await resolver.ResolveAsync(null, null);
 
@@ -73,9 +76,9 @@ public sealed class ProfileResolverTests
             };
 
             IRecallConfigLocator locator = new RecallConfigLocator(environment);
-            IRecallConfigValidator validator = new RecallConfigValidator();
+            IRecallConfigValidator validator = new RecallConfigValidator(CreateProviderRegistry());
             IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults, validator);
-            var resolver = new ProfileResolver(loader, environment);
+            var resolver = new ProfileResolver(loader, CreateProviderRegistry(), environment);
 
             var profile = await resolver.ResolveAsync("personal", "duckduckgo");
 
@@ -86,5 +89,56 @@ public sealed class ProfileResolverTests
         {
             tempRoot.Delete(true);
         }
+    }
+
+    [Fact]
+    public async Task Normalizes_Provider_Aliases_Using_Registry()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory();
+        try
+        {
+            var configPath = Path.Combine(tempRoot.FullName, "profiles.json");
+            await File.WriteAllTextAsync(configPath, """
+            {
+              "defaultProvider": "ddg"
+            }
+            """);
+
+            var environment = new FakeSystemEnvironment(new Dictionary<string, string?>(), @"C:\Roaming", @"C:\Local");
+            var runtimeDefaults = new RuntimeDefaults { ConfigPath = configPath };
+            var registry = CreateProviderRegistry();
+            IRecallConfigLocator locator = new RecallConfigLocator(environment);
+            IRecallConfigValidator validator = new RecallConfigValidator(registry);
+            IRecallConfigLoader loader = new RecallConfigLoader(locator, runtimeDefaults, validator);
+            var resolver = new ProfileResolver(loader, registry, environment);
+
+            var profile = await resolver.ResolveAsync(null, null);
+
+            Assert.Equal("duckduckgo", profile.DefaultProvider);
+        }
+        finally
+        {
+            tempRoot.Delete(true);
+        }
+    }
+
+    private static SearchProviderRegistry CreateProviderRegistry()
+        => new(
+        [
+            new DuckDuckGoSearchProvider(new HttpClient(new StubHandler())),
+            new DuckDuckGoBrowserSearchProvider(new StubBrowserSessionFactory()),
+            new BingSearchProvider(new StubBrowserSessionFactory())
+        ]);
+
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class StubBrowserSessionFactory : IBrowserSessionFactory
+    {
+        public ValueTask<Microsoft.Playwright.IBrowserContext> CreateContextAsync(Zakira.Recall.Abstractions.Models.ProfileDescriptor profile, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
     }
 }

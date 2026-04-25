@@ -49,4 +49,23 @@ public sealed class PlaywrightBrowserSessionFactoryTests
 
         Assert.Equal(profile.UserDataDir, userDataDir);
     }
+
+    [Fact]
+    public void Headless_Profile_Seeds_From_Persisted_Profile_Directory()
+    {
+        var profile = new ProfileDescriptor
+        {
+            Name = "default",
+            UserDataDir = @"C:\profiles\default",
+            Channel = "msedge",
+            Headless = true,
+            DefaultProvider = "duckduckgo",
+            TimeoutSeconds = 30,
+            EnableProviderFallback = true,
+            ProviderHealthCooldownSeconds = 300,
+            MaxConcurrentFetches = 3
+        };
+
+        Assert.Equal(profile.UserDataDir, PlaywrightBrowserSessionFactory.GetSeedUserDataDirForProfile(profile));
+    }
 }

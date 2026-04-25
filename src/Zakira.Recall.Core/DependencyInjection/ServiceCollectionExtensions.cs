@@ -16,12 +16,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<RuntimeDefaults>();
         services.AddSingleton<ISystemEnvironment, SystemEnvironment>();
         services.AddSingleton<IRecallConfigLocator, RecallConfigLocator>();
+        services.AddSingleton<ISearchProviderRegistry, SearchProviderRegistry>();
         services.AddSingleton<IRecallConfigValidator, RecallConfigValidator>();
         services.AddSingleton<IRecallConfigLoader, RecallConfigLoader>();
         services.AddSingleton<IRecallConfigWriter, RecallConfigWriter>();
         services.AddSingleton<IProfileResolver, ProfileResolver>();
         services.AddSingleton<IProfileBootstrapper, ProfileBootstrapper>();
-        services.AddSingleton<ISearchProviderRegistry, SearchProviderRegistry>();
         services.AddSingleton<IProviderHealthTracker, ProviderHealthTracker>();
         services.AddSingleton<ISearchService, SearchService>();
         services.AddSingleton<IFetchService, FetchService>();

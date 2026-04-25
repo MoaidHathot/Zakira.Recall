@@ -5,12 +5,12 @@ namespace Zakira.Recall.Core.Configuration;
 
 public sealed class RecallConfigValidator : IRecallConfigValidator
 {
-    private static readonly HashSet<string> ValidProviders = new(StringComparer.OrdinalIgnoreCase)
+    private readonly ISearchProviderRegistry _providerRegistry;
+
+    public RecallConfigValidator(ISearchProviderRegistry providerRegistry)
     {
-        "duckduckgo",
-        "duckduckgo-browser",
-        "bing"
-    };
+        _providerRegistry = providerRegistry;
+    }
 
     private static readonly HashSet<string> ValidChannels = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -44,7 +44,7 @@ public sealed class RecallConfigValidator : IRecallConfigValidator
         }
     }
 
-    private static void ValidateProfile(string profileName, RecallProfileConfig profile)
+    private void ValidateProfile(string profileName, RecallProfileConfig profile)
     {
         ValidateProvider(profile.DefaultProvider, $"profiles.{profileName}.defaultProvider");
         ValidateProviders(profile.FallbackProviders, $"profiles.{profileName}.fallbackProviders");
@@ -59,20 +59,20 @@ public sealed class RecallConfigValidator : IRecallConfigValidator
         }
     }
 
-    private static void ValidateProvider(string? provider, string path)
+    private void ValidateProvider(string? provider, string path)
     {
         if (string.IsNullOrWhiteSpace(provider))
         {
             return;
         }
 
-        if (!ValidProviders.Contains(provider.Trim()))
+        if (_providerRegistry.NormalizeProviderName(provider) is null)
         {
             throw new InvalidOperationException($"Unsupported provider '{provider}' in {path}.");
         }
     }
 
-    private static void ValidateProviders(IReadOnlyList<string> providers, string path)
+    private void ValidateProviders(IReadOnlyList<string> providers, string path)
     {
         foreach (var provider in providers)
         {

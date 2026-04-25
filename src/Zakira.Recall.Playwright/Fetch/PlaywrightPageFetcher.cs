@@ -19,7 +19,15 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
             Timeout = timeoutMs
         });
 
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = timeoutMs });
+        try
+        {
+            // Some sites keep polling in the background forever. Treat network idle as a best-effort settle step.
+            await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = GetPostLoadWaitTimeoutMs(timeoutMs) });
+        }
+        catch (TimeoutException)
+        {
+        }
+
         await page.WaitForTimeoutAsync(250);
         var snapshot = await page.EvaluateAsync<PageSnapshot>(
             """
@@ -111,6 +119,9 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
             WordCount = normalizedText.Length == 0 ? 0 : normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length
         };
     }
+
+    internal static int GetPostLoadWaitTimeoutMs(int timeoutMs)
+        => Math.Clamp(timeoutMs, 250, 5000);
 
     private sealed class PageSnapshot
     {

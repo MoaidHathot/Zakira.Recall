@@ -76,6 +76,16 @@ public sealed class InspectAndOutputCommandTests
     }
 
     [Fact]
+    public async Task Profile_Show_Defaults_To_Text_Output()
+    {
+        var result = await RunToolAsync("profile show default");
+
+        Assert.True(result.ExitCode == 0, result.DebugText);
+        Assert.Contains("Profile:", result.StandardOutput);
+        Assert.DoesNotContain("\"Name\"", result.StandardOutput, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Providers_List_Supports_Dump_Output()
     {
         var result = await RunToolAsync("providers list --output dump");

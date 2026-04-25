@@ -7,6 +7,7 @@ namespace Zakira.Recall.Core.Profiles;
 
 public sealed class ProfileResolver(
     IRecallConfigLoader configLoader,
+    ISearchProviderRegistry providerRegistry,
     ISystemEnvironment environment) : IProfileResolver
 {
     public async ValueTask<ProfileDescriptor> ResolveAsync(string? profileName, string? providerOverride, CancellationToken cancellationToken = default)
@@ -14,10 +15,10 @@ public sealed class ProfileResolver(
         var config = await configLoader.LoadAsync(cancellationToken: cancellationToken);
         var selectedProfileName = SelectProfileName(config, profileName);
         var profile = ResolveProfileConfig(config, selectedProfileName);
-        var defaultProvider = NormalizeProvider(providerOverride)
-            ?? NormalizeProvider(profile?.DefaultProvider)
-            ?? NormalizeProvider(config.DefaultProvider)
-            ?? "duckduckgo";
+        var defaultProvider = providerRegistry.NormalizeProviderName(providerOverride)
+            ?? providerRegistry.NormalizeProviderName(profile?.DefaultProvider)
+            ?? providerRegistry.NormalizeProviderName(config.DefaultProvider)
+            ?? providerRegistry.GetDefaultProviderName();
 
         var profilesRoot = ResolveProfilesRoot(config);
         var userDataDir = ResolveUserDataDir(selectedProfileName, profile, profilesRoot);
@@ -74,31 +75,14 @@ public sealed class ProfileResolver(
         return Path.Combine(profilesRoot, profileName);
     }
 
-    private static string? NormalizeProvider(string? provider)
-    {
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            return null;
-        }
-
-        return provider.Trim().ToLowerInvariant() switch
-        {
-            "ddg" => "duckduckgo",
-            "duckduckgo" => "duckduckgo",
-            "duckduckgo-browser" => "duckduckgo-browser",
-            "bing" => "bing",
-            _ => provider.Trim().ToLowerInvariant()
-        };
-    }
-
-    private static IReadOnlyList<string> ResolveFallbackProviders(RecallConfig config, RecallProfileConfig? profile, string defaultProvider)
+    private IReadOnlyList<string> ResolveFallbackProviders(RecallConfig config, RecallProfileConfig? profile, string defaultProvider)
     {
         var providers = profile?.FallbackProviders.Count > 0
             ? profile.FallbackProviders
             : config.FallbackProviders;
 
         return providers
-            .Select(NormalizeProvider)
+            .Select(providerRegistry.NormalizeProviderName)
             .Where(static provider => !string.IsNullOrWhiteSpace(provider))
             .Cast<string>()
             .Where(provider => !string.Equals(provider, defaultProvider, StringComparison.OrdinalIgnoreCase))

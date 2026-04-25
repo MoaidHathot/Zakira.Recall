@@ -100,6 +100,31 @@ public sealed class ConfigInitCommandTests
         Assert.Contains("capabilities", standardOutput, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Providers_Test_Resolves_Alias_And_Shows_Text_By_Default()
+    {
+        var toolDllPath = GetToolDllPath();
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo("dotnet", $"\"{toolDllPath}\" providers test ddg")
+            {
+                WorkingDirectory = GetRepositoryRoot(),
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            }
+        };
+
+        process.Start();
+        var standardOutput = await process.StandardOutput.ReadToEndAsync();
+        var standardError = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        Assert.True(process.ExitCode == 0, $"providers test failed.{Environment.NewLine}{standardOutput}{Environment.NewLine}{standardError}");
+        Assert.Contains("Provider: duckduckgo", standardOutput);
+        Assert.Contains("Aliases: ddg", standardOutput);
+    }
+
     private static string GetToolDllPath()
     {
         var toolDllPath = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin", "Debug", "net10.0", "Zakira.Recall.Tool.dll");

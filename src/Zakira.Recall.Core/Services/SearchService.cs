@@ -28,8 +28,8 @@ public sealed class SearchService(
             FallbackProviders = request.FallbackProviders
         };
         var attempts = new List<ProviderAttempt>();
-        var candidates = BuildCandidateProviders(request, profile);
         var fallbackEnabled = request.EnableFallback ?? profile.EnableProviderFallback;
+        var candidates = BuildCandidateProviders(request, profile, fallbackEnabled);
 
         foreach (var providerName in candidates)
         {
@@ -117,10 +117,19 @@ public sealed class SearchService(
         };
     }
 
-    private IReadOnlyList<string> BuildCandidateProviders(SearchRequest request, ProfileDescriptor profile)
+    private IReadOnlyList<string> BuildCandidateProviders(SearchRequest request, ProfileDescriptor profile, bool fallbackEnabled)
     {
         var candidates = new List<string> { profile.DefaultProvider };
         var requestFallbacks = request.FallbackProviders.Count > 0 ? request.FallbackProviders : profile.FallbackProviders;
+        if (requestFallbacks.Count == 0 && fallbackEnabled)
+        {
+            requestFallbacks = providerRegistry.GetProviderNames()
+                .Where(providerName => !string.Equals(providerName, profile.DefaultProvider, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(providerName => SharesProviderFamily(profile.DefaultProvider, providerName))
+                .ThenBy(static providerName => providerName, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
         foreach (var provider in requestFallbacks)
         {
             if (!candidates.Contains(provider, StringComparer.OrdinalIgnoreCase))
@@ -131,4 +140,15 @@ public sealed class SearchService(
 
         return candidates;
     }
+
+    private static bool SharesProviderFamily(string primaryProvider, string candidateProvider)
+    {
+        var primaryFamily = GetProviderFamily(primaryProvider);
+        var candidateFamily = GetProviderFamily(candidateProvider);
+        return !string.IsNullOrWhiteSpace(primaryFamily)
+            && string.Equals(primaryFamily, candidateFamily, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetProviderFamily(string providerName)
+        => providerName.Split('-', 2, StringSplitOptions.RemoveEmptyEntries)[0];
 }

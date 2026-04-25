@@ -46,18 +46,28 @@ public sealed class DuckDuckGoHtmlParserTests
             {
                 Assert.Equal("Alpha Result", first.Title);
                 Assert.Equal("https://example.com/alpha", first.Url);
+                Assert.Equal("https://example.com/alpha", first.CanonicalUrl);
+                Assert.Equal("example.com", first.Host);
                 Assert.Equal("example.com/alpha", first.DisplayUrl);
                 Assert.Equal("First alpha snippet.", first.Snippet);
                 Assert.Equal("duckduckgo", first.Provider);
                 Assert.Equal(1, first.Rank);
+                Assert.Equal(1, first.RawRank);
+                Assert.True(first.QualityScore > 0);
+                Assert.Equal(["duckduckgo"], first.SourceProviders);
             },
             second =>
             {
                 Assert.Equal("Beta Result", second.Title);
                 Assert.Equal("https://example.com/beta", second.Url);
+                Assert.Equal("https://example.com/beta", second.CanonicalUrl);
+                Assert.Equal("example.com", second.Host);
                 Assert.Equal("example.com/beta", second.DisplayUrl);
                 Assert.Equal("Second snippet", second.Snippet);
                 Assert.Equal(2, second.Rank);
+                Assert.Equal(2, second.RawRank);
+                Assert.True(second.QualityScore > 0);
+                Assert.Equal(["duckduckgo"], second.SourceProviders);
             });
     }
 

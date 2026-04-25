@@ -7,7 +7,40 @@ namespace Zakira.Recall.Playwright.Providers;
 
 public sealed class DuckDuckGoBrowserSearchProvider(IBrowserSessionFactory browserSessionFactory) : ISearchProvider
 {
+    private static readonly string[] ResultSelectors =
+    [
+        "article[data-testid='result']",
+        "#links .result.results_links",
+        ".react-results--main article[data-testid='result']",
+        "#links .result",
+        "[data-testid='result']"
+    ];
+
+    private static readonly string[] OrganicLinkSelectors =
+    [
+        "h2 a[href]",
+        "a[data-testid='result-title-a'][href]",
+        ".result__title a.result__a[href]",
+        "a.result__a[href]"
+    ];
+
+    private static readonly string[] SnippetSelectors =
+    [
+        "[data-result='snippet']",
+        ".result__snippet",
+        "[data-testid='result-snippet']"
+    ];
+
+    private static readonly string[] DisplayUrlSelectors =
+    [
+        ".result__url",
+        "[data-testid='result-extras-url-link']",
+        "[data-testid='result-url']"
+    ];
+
     public string Name => "duckduckgo-browser";
+
+    public string? SetupUrl => "https://duckduckgo.com";
 
     public SearchProviderCapabilities Capabilities => new()
     {
@@ -28,24 +61,21 @@ public sealed class DuckDuckGoBrowserSearchProvider(IBrowserSessionFactory brows
             Timeout = profile.TimeoutSeconds * 1000
         });
 
-        await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = profile.TimeoutSeconds * 1000 });
-        var selectors = new[]
+        if (await IsBotChallengePageAsync(page))
         {
-            "article[data-testid='result']",
-            "#links .result",
-            ".react-results--main article"
-        };
-
-        ILocator? items = null;
-        foreach (var selector in selectors)
-        {
-            var locator = page.Locator(selector);
-            if (await locator.CountAsync() > 0)
-            {
-                items = locator;
-                break;
-            }
+            throw new InvalidOperationException("DuckDuckGo browser search was blocked by a bot challenge.");
         }
+
+        try
+        {
+            await page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = GetPostLoadWaitTimeoutMs(profile.TimeoutSeconds * 1000) });
+        }
+        catch (TimeoutException)
+        {
+        }
+
+        await page.WaitForTimeoutAsync(250);
+        var items = await FindResultsLocatorAsync(page);
 
         if (items is null)
         {
@@ -57,22 +87,39 @@ public sealed class DuckDuckGoBrowserSearchProvider(IBrowserSessionFactory brows
         for (var index = 0; index < count; index++)
         {
             var item = items.Nth(index);
-            var title = HtmlText.Normalize(await item.Locator("h2, [data-testid='result-title-a']").First.TextContentAsync());
-            var link = await item.Locator("a[href]").First.GetAttributeAsync("href");
+            var linkLocator = await FindFirstLocatorAsync(item, OrganicLinkSelectors);
+            if (linkLocator is null)
+            {
+                continue;
+            }
+
+            var title = HtmlText.Normalize(await linkLocator.TextContentAsync());
+            var link = await linkLocator.GetAttributeAsync("href");
             if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(link))
             {
                 continue;
             }
 
-            var snippet = HtmlText.Normalize(await GetOptionalTextAsync(item, "[data-result='snippet'], .result__snippet, [data-testid='result-snippet']"));
+            var normalizedUrl = NormalizeUrl(link);
+            var canonicalUrl = CanonicalizeUrl(normalizedUrl);
+            var host = TryGetHost(canonicalUrl ?? normalizedUrl);
+            var displayUrl = await GetOptionalTextAsync(item, DisplayUrlSelectors) ?? NormalizeDisplayUrl(canonicalUrl ?? normalizedUrl);
+            var snippet = await GetOptionalTextAsync(item, SnippetSelectors);
+            var rank = results.Count + 1;
             results.Add(new SearchResult
             {
                 Title = title,
-                Url = NormalizeUrl(link),
+                Url = normalizedUrl,
+                CanonicalUrl = canonicalUrl,
+                Host = host,
+                DisplayUrl = displayUrl,
                 Snippet = snippet,
                 Provider = Name,
-                Rank = results.Count + 1,
-                DisplayUrl = NormalizeDisplayUrl(link)
+                Rank = rank,
+                RawRank = index + 1,
+                QualityScore = ScoreResult(title, snippet, host),
+                QueryVariant = null,
+                SourceProviders = [Name]
             });
         }
 
@@ -105,8 +152,63 @@ public sealed class DuckDuckGoBrowserSearchProvider(IBrowserSessionFactory brows
         return $"https://duckduckgo.com/?{string.Join("&", parameters)}";
     }
 
+    private static async Task<ILocator?> FindResultsLocatorAsync(IPage page)
+    {
+        foreach (var selector in ResultSelectors)
+        {
+            var locator = page.Locator(selector);
+            if (await locator.CountAsync() > 0)
+            {
+                return locator;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<ILocator?> FindFirstLocatorAsync(ILocator item, IReadOnlyList<string> selectors)
+    {
+        foreach (var selector in selectors)
+        {
+            var locator = item.Locator(selector);
+            if (await locator.CountAsync() > 0)
+            {
+                return locator.First;
+            }
+        }
+
+        return null;
+    }
+
     private static string NormalizeUrl(string href)
-        => href.StartsWith("//", StringComparison.Ordinal) ? $"https:{href}" : href;
+    {
+        if (string.IsNullOrWhiteSpace(href))
+        {
+            return href;
+        }
+
+        var absoluteHref = href.StartsWith("//", StringComparison.Ordinal)
+            ? $"https:{href}"
+            : href.StartsWith("/", StringComparison.Ordinal)
+                ? $"https://duckduckgo.com{href}"
+                : href;
+
+        if (!Uri.TryCreate(absoluteHref, UriKind.Absolute, out var uri))
+        {
+            return href;
+        }
+
+        if (uri.Host.EndsWith("duckduckgo.com", StringComparison.OrdinalIgnoreCase))
+        {
+            var redirectTarget = GetQueryValue(uri.Query, "uddg");
+            if (!string.IsNullOrWhiteSpace(redirectTarget))
+            {
+                return redirectTarget;
+            }
+        }
+
+        return uri.ToString();
+    }
 
     private static string NormalizeDisplayUrl(string href)
         => Uri.TryCreate(NormalizeUrl(href), UriKind.Absolute, out var uri) ? uri.Host + uri.PathAndQuery : href;
@@ -121,9 +223,94 @@ public sealed class DuckDuckGoBrowserSearchProvider(IBrowserSessionFactory brows
             _ => timeRange.Trim().ToLowerInvariant()
         };
 
-    private static async Task<string?> GetOptionalTextAsync(ILocator item, string selector)
+    private static async Task<string?> GetOptionalTextAsync(ILocator item, IReadOnlyList<string> selectors)
     {
-        var locator = item.Locator(selector);
-        return await locator.CountAsync() == 0 ? null : await locator.First.TextContentAsync();
+        foreach (var selector in selectors)
+        {
+            var locator = item.Locator(selector);
+            if (await locator.CountAsync() == 0)
+            {
+                continue;
+            }
+
+            var text = HtmlText.Normalize(await locator.First.TextContentAsync());
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> IsBotChallengePageAsync(IPage page)
+    {
+        var bodyText = (await page.Locator("body").TextContentAsync() ?? string.Empty).ToLowerInvariant();
+        return bodyText.Contains("bots use duckduckgo too", StringComparison.Ordinal)
+            || bodyText.Contains("confirm this search was made by a human", StringComparison.Ordinal)
+            || bodyText.Contains("select all squares containing a duck", StringComparison.Ordinal);
+    }
+
+    private static int GetPostLoadWaitTimeoutMs(int timeoutMs)
+        => Math.Clamp(timeoutMs, 250, 5000);
+
+    private static string? CanonicalizeUrl(string? url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            return url;
+        }
+
+        var builder = new UriBuilder(uri)
+        {
+            Fragment = string.Empty,
+            Host = uri.Host.ToLowerInvariant()
+        };
+
+        if ((builder.Scheme == Uri.UriSchemeHttps && builder.Port == 443)
+            || (builder.Scheme == Uri.UriSchemeHttp && builder.Port == 80))
+        {
+            builder.Port = -1;
+        }
+
+        var canonicalUrl = builder.Uri.GetLeftPart(UriPartial.Path).TrimEnd('/');
+        return string.IsNullOrWhiteSpace(canonicalUrl) ? builder.Uri.GetLeftPart(UriPartial.Path) : canonicalUrl;
+    }
+
+    private static string? TryGetHost(string? url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null;
+
+    private static int ScoreResult(string title, string? snippet, string? host)
+    {
+        var score = title.Length * 2;
+        if (!string.IsNullOrWhiteSpace(snippet))
+        {
+            score += Math.Min(snippet.Length, 200);
+        }
+
+        if (!string.IsNullOrWhiteSpace(host))
+        {
+            score += 25;
+        }
+
+        return score;
+    }
+
+    private static string? GetQueryValue(string query, string key)
+    {
+        foreach (var segment in query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var separatorIndex = segment.IndexOf('=');
+            var rawName = separatorIndex >= 0 ? segment[..separatorIndex] : segment;
+            if (!string.Equals(Uri.UnescapeDataString(rawName), key, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var rawValue = separatorIndex >= 0 ? segment[(separatorIndex + 1)..] : string.Empty;
+            return Uri.UnescapeDataString(rawValue);
+        }
+
+        return null;
     }
 }

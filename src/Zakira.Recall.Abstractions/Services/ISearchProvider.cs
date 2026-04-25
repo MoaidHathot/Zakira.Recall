@@ -6,6 +6,10 @@ public interface ISearchProvider
 {
     string Name { get; }
 
+    IReadOnlyList<string> Aliases => [];
+
+    string? SetupUrl => null;
+
     SearchProviderCapabilities Capabilities { get; }
 
     ValueTask<IReadOnlyList<SearchResult>> SearchAsync(SearchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken = default);

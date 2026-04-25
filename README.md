@@ -9,6 +9,7 @@ Local CLI and MCP server for web search, page fetch, and research workflows with
 Supports:
 
 - provider selection and fallback
+- pluggable provider discovery with alias support
 - Playwright-backed search and fetch
 - structured citations for research results
 - JSON, text, Markdown, and Dumpify CLI output modes
@@ -27,7 +28,6 @@ Available commands after install:
 
 ```powershell
 recall --help
-zakira.recall --help
 ```
 
 ## Commands
@@ -42,9 +42,10 @@ recall research "playwright search providers" --fallback-provider bing --max-con
 recall config init
 recall config show --output dump
 recall providers list --output json
+recall providers test ddg
 recall profile show default --output markdown
 recall profile init default --channel msedge --provider duckduckgo --headless false
-recall profile auth interactive --provider duckduckgo-browser
+recall profile auth interactive --provider duckduckgo-browser --no-wait true
 recall mcp
 ```
 
@@ -56,15 +57,20 @@ Available providers:
 - `duckduckgo-browser`
 - `bing`
 
+Provider names are resolved through the registry, so aliases such as `ddg` work anywhere a provider name is accepted.
+
 List provider capabilities and current health state:
 
 ```powershell
 recall providers list
 recall providers list --output json
 recall providers list --output dump
+recall providers test ddg
 ```
 
 The browser-backed providers use Playwright and support interactive setup flows.
+
+For contributors: provider registration is assembly-driven. New `ISearchProvider` implementations in the Playwright assembly are discovered automatically, and aliases plus setup URLs come from the provider itself.
 
 ## Playwright Setup
 
@@ -83,9 +89,10 @@ If you want to prepare a persistent interactive browser profile for consent page
 ```powershell
 recall profile auth interactive --provider duckduckgo-browser
 recall profile auth interactive --provider bing
+recall profile auth interactive --provider bing --no-wait true
 ```
 
-This opens a non-headless browser using the selected profile and waits for you to press Enter after setup is complete.
+This opens a non-headless browser using the selected profile, navigates to the provider's setup URL, and prints guidance in the terminal. By default it waits for Enter before closing. Use `--no-wait true` if you want the command to return immediately after opening the page.
 
 ## Config
 
@@ -184,6 +191,8 @@ Notes:
 
 ## CLI Options
 
+User-facing commands default to `text` output. Use `--output json` when you want machine-oriented structured output.
+
 Common search options:
 
 ```powershell
@@ -234,6 +243,18 @@ recall profile show [name] \
   [--output <json|text|markdown|dump>]
 ```
 
+Provider inspection options:
+
+```powershell
+recall providers list \
+  [--profile <name>] \
+  [--output <json|text|markdown|dump>]
+
+recall providers test <name> \
+  [--profile <name>] \
+  [--output <json|text|markdown|dump>]
+```
+
 Config inspection options:
 
 ```powershell
@@ -264,10 +285,11 @@ CLI commands support multiple output modes:
 Examples:
 
 ```powershell
-recall search "mcp server" --output text
+recall search "mcp server"
 recall fetch "https://example.com" --output markdown
 recall research "playwright search" --output json
 recall providers list --output dump
+recall providers test ddg
 ```
 
 ## Research Output

@@ -13,6 +13,7 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     {
         var userDataDir = ResolveUserDataDir(profile);
         Directory.CreateDirectory(userDataDir);
+        PrepareSessionUserDataDir(profile, userDataDir);
 
         try
         {
@@ -31,10 +32,20 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             Channel = profile.Channel == "chromium" ? null : profile.Channel,
             Headless = profile.Headless,
             Locale = profile.Locale,
-            IgnoreHTTPSErrors = false
+            IgnoreHTTPSErrors = false,
+            ColorScheme = ColorScheme.Light,
+            DeviceScaleFactor = 1,
+            ViewportSize = new ViewportSize { Width = 1440, Height = 960 },
+            UserAgent = BuildUserAgent(profile),
+            Args =
+            [
+                "--disable-blink-features=AutomationControlled",
+                "--lang=en-US"
+            ]
         };
 
         var context = await browserType.LaunchPersistentContextAsync(userDataDir, options);
+        await HardenContextAsync(context, cancellationToken);
         if (profile.Headless)
         {
             context.Close += (_, _) => SafeDeleteDirectory(userDataDir);
@@ -61,6 +72,76 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
 
     internal static string GetUserDataDirForProfile(ProfileDescriptor profile)
         => ResolveUserDataDir(profile);
+
+    internal static string? GetSeedUserDataDirForProfile(ProfileDescriptor profile)
+        => profile.Headless ? profile.UserDataDir : null;
+
+    private static void PrepareSessionUserDataDir(ProfileDescriptor profile, string sessionUserDataDir)
+    {
+        var seedUserDataDir = GetSeedUserDataDirForProfile(profile);
+        if (string.IsNullOrWhiteSpace(seedUserDataDir) || !Directory.Exists(seedUserDataDir))
+        {
+            return;
+        }
+
+        CopyDirectory(seedUserDataDir, sessionUserDataDir);
+    }
+
+    private static async Task HardenContextAsync(IBrowserContext context, CancellationToken cancellationToken)
+    {
+        await context.AddInitScriptAsync(
+            """
+            () => {
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32'
+                });
+
+                window.chrome = window.chrome || { runtime: {} };
+            }
+            """);
+        await Task.CompletedTask.WaitAsync(cancellationToken);
+    }
+
+    private static string BuildUserAgent(ProfileDescriptor profile)
+    {
+        var chromeVersion = profile.Channel switch
+        {
+            "msedge" => "136.0.0.0",
+            "chrome" => "136.0.0.0",
+            _ => "136.0.0.0"
+        };
+
+        return profile.Channel switch
+        {
+            "msedge" => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chromeVersion} Safari/537.36 Edg/{chromeVersion}",
+            _ => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chromeVersion} Safari/537.36"
+        };
+    }
+
+    private static void CopyDirectory(string sourceDir, string destinationDir)
+    {
+        foreach (var directory in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, directory);
+            Directory.CreateDirectory(Path.Combine(destinationDir, relativePath));
+        }
+
+        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
+        {
+            var relativePath = Path.GetRelativePath(sourceDir, file);
+            var destinationPath = Path.Combine(destinationDir, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
+            File.Copy(file, destinationPath, overwrite: true);
+        }
+    }
 
     private static void SafeDeleteDirectory(string path)
     {

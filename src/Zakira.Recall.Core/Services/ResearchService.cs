@@ -26,7 +26,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             FallbackProviders = request.FallbackProviders
         }, cancellationToken);
 
-        var topResults = SelectResults(searchResponse.Results, request.TopPagesToRead, request.EnforceDomainDiversity);
+        var topResults = SelectResults(request.Query, searchResponse.Results, request.TopPagesToRead, request.EnforceDomainDiversity);
         var errors = new List<OperationError>();
         if (searchResponse.Error is not null)
         {
@@ -75,11 +75,16 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
         }).ToArray();
 
         var fetches = await Task.WhenAll(fetchTasks);
-        var sources = new List<ResearchSource>(fetches.Length);
-        var citations = new List<ResearchCitation>(fetches.Length);
-        for (var index = 0; index < fetches.Length; index++)
+        var selectedFetches = fetches
+            .OrderByDescending(item => ScoreFetchedResult(item.Item1, item.Item2))
+            .Take(Math.Clamp(request.TopPagesToRead, 1, Math.Max(1, fetches.Length)))
+            .ToArray();
+
+        var sources = new List<ResearchSource>(selectedFetches.Length);
+        var citations = new List<ResearchCitation>(selectedFetches.Length);
+        for (var index = 0; index < selectedFetches.Length; index++)
         {
-            var (result, fetch) = fetches[index];
+            var (result, fetch) = selectedFetches[index];
             if (fetch.Error is not null)
             {
                 errors.Add(fetch.Error);
@@ -106,12 +111,16 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             });
         }
 
+        var strongSources = sources.Where(source => !IsWeakFetch(source.Fetch)).ToArray();
+        var summary = BuildSummary(request.Query, strongSources);
+
         return new ResearchResponse
         {
             Query = request.Query,
             Provider = searchResponse.Provider,
             Profile = searchResponse.Profile,
-            Success = searchResponse.Success,
+            Success = strongSources.Length > 0,
+            Summary = summary,
             SearchResults = searchResponse.Results,
             Sources = sources,
             Citations = citations,
@@ -119,10 +128,13 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
         };
     }
 
-    private static SearchResult[] SelectResults(IReadOnlyList<SearchResult> results, int topPagesToRead, bool enforceDomainDiversity)
+    private static SearchResult[] SelectResults(string query, IReadOnlyList<SearchResult> results, int topPagesToRead, bool enforceDomainDiversity)
     {
         var targetCount = Math.Clamp(topPagesToRead, 1, Math.Max(1, results.Count));
-        var uniqueResults = DedupeResults(results);
+        var uniqueResults = DedupeResults(results)
+            .OrderByDescending(result => ScoreSearchResult(query, result))
+            .ThenBy(result => result.Rank)
+            .ToList();
         if (!enforceDomainDiversity)
         {
             return uniqueResults.Take(targetCount).ToArray();
@@ -161,6 +173,142 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
 
         return selected.ToArray();
     }
+
+    private static int ScoreSearchResult(string query, SearchResult result)
+    {
+        var score = 0;
+        var domain = TryGetDomain(result.Url) ?? string.Empty;
+        var title = result.Title ?? string.Empty;
+        var snippet = result.Snippet ?? string.Empty;
+        var haystack = string.Join(' ', new[] { title, snippet, result.Url }).ToLowerInvariant();
+
+        foreach (var token in TokenizeQuery(query))
+        {
+            if (haystack.Contains(token, StringComparison.Ordinal))
+            {
+                score += 6;
+            }
+        }
+
+        if (domain.Contains("linkedin.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("facebook.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("instagram.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("x.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("twitter.com", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 8;
+        }
+
+        if (LooksLikePersonalSite(query, domain, title, snippet))
+        {
+            score += 14;
+        }
+
+        return score;
+    }
+
+    private static int ScoreFetchedResult(SearchResult result, FetchResponse fetch)
+    {
+        if (!fetch.Success)
+        {
+            return int.MinValue;
+        }
+
+        var score = Math.Min(fetch.WordCount, 1200);
+        if (IsWeakFetch(fetch))
+        {
+            score -= 10_000;
+        }
+
+        var domain = fetch.Domain ?? TryGetDomain(fetch.FinalUrl) ?? string.Empty;
+        if (domain.Contains("linkedin.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("facebook.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("instagram.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("x.com", StringComparison.OrdinalIgnoreCase)
+            || domain.Contains("twitter.com", StringComparison.OrdinalIgnoreCase))
+        {
+            score -= 250;
+        }
+
+        return score;
+    }
+
+    private static bool LooksLikePersonalSite(string query, string domain, string title, string snippet)
+    {
+        if (domain.Length == 0)
+        {
+            return false;
+        }
+
+        var tokens = TokenizeQuery(query);
+        var domainTokens = domain.Replace("www.", string.Empty, StringComparison.OrdinalIgnoreCase);
+        return tokens.Any(token => domainTokens.Contains(token, StringComparison.OrdinalIgnoreCase))
+            || title.Contains("home", StringComparison.OrdinalIgnoreCase)
+            || snippet.Contains("public speaking", StringComparison.OrdinalIgnoreCase)
+            || snippet.Contains("portfolio", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsWeakFetch(FetchResponse fetch)
+    {
+        if (!fetch.Success)
+        {
+            return true;
+        }
+
+        var text = fetch.Text ?? string.Empty;
+        if (fetch.WordCount < 15)
+        {
+            return true;
+        }
+
+        return text.Contains("join linkedin", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("log into facebook", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("sign up", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("please complete the following challenge", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("unfortunately, bots use duckduckgo too", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? BuildSummary(string query, IReadOnlyList<ResearchSource> sources)
+    {
+        var summaryLines = sources
+            .Where(source => !IsWeakFetch(source.Fetch))
+            .Take(3)
+            .Select(source => BuildSourceSummaryLine(source))
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .ToArray();
+
+        if (summaryLines.Length == 0)
+        {
+            return null;
+        }
+
+        return string.Join(" ", summaryLines);
+    }
+
+    private static string? BuildSourceSummaryLine(ResearchSource source)
+    {
+        var text = source.Fetch.Text ?? source.Fetch.Excerpt ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var firstSentence = text.Split(['.', '!', '?'], 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(firstSentence))
+        {
+            return null;
+        }
+
+        return $"[{source.CitationId}] {firstSentence.Trim()}";
+    }
+
+    private static string[] TokenizeQuery(string query)
+        => query.Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static token => token.Length >= 3)
+            .Select(static token => token.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
 
     private static List<SearchResult> DedupeResults(IReadOnlyList<SearchResult> results)
     {

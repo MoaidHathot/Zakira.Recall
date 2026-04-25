@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.ComponentModel;
+using System.Text;
 using System.Text.Json;
 using Dumpify;
 using Microsoft.Extensions.DependencyInjection;
@@ -64,7 +65,7 @@ internal static class ZakiraRecallProgram
         var safeSearchOption = CreateStringOption("--safe-search", "Safe search override: true or false.");
         var fallbackOption = CreateStringOption("--fallback", "Provider fallback override: true or false.");
         var fallbackProvidersOption = CreateStringListOption("--fallback-provider", "Fallback provider name.");
-        var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
+        var outputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         command.Add(queryArgument);
         command.Add(providerOption);
@@ -93,7 +94,7 @@ internal static class ZakiraRecallProgram
                 FallbackProviders = parseResult.GetValue(fallbackProvidersOption) ?? []
             }, cancellationToken);
 
-            WriteOutput(response, parseResult.GetValue(outputOption), "json");
+            WriteOutput(response, parseResult.GetValue(outputOption), "text");
             return response.Error is null ? 0 : 1;
         });
         return command;
@@ -110,7 +111,7 @@ internal static class ZakiraRecallProgram
         var urlArgument = CreateRequiredArgument<string>("url", "The URL to fetch.");
         var profileOption = CreateStringOption("--profile", "Profile name.");
         var timeoutOption = CreateIntOption("--timeout", "Navigation timeout in seconds.");
-        var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
+        var outputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         command.Add(urlArgument);
         command.Add(profileOption);
@@ -127,7 +128,7 @@ internal static class ZakiraRecallProgram
                 TimeoutSeconds = parseResult.GetValue(timeoutOption) ?? 30
             }, cancellationToken);
 
-            WriteOutput(response, parseResult.GetValue(outputOption), "json");
+            WriteOutput(response, parseResult.GetValue(outputOption), "text");
             return response.Success ? 0 : 1;
         });
         return command;
@@ -153,7 +154,7 @@ internal static class ZakiraRecallProgram
         var fallbackProvidersOption = CreateStringListOption("--fallback-provider", "Fallback provider name.");
         var concurrencyOption = CreateIntOption("--max-concurrent-fetches", "Maximum number of parallel fetches.");
         var domainDiversityOption = CreateStringOption("--domain-diversity", "Prefer unique domains when selecting pages to fetch: true or false.");
-        var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
+        var outputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         command.Add(queryArgument);
         command.Add(providerOption);
@@ -188,7 +189,7 @@ internal static class ZakiraRecallProgram
                 EnforceDomainDiversity = ParseNullableBool(parseResult.GetValue(domainDiversityOption), "--domain-diversity") ?? true
             }, cancellationToken);
 
-            WriteOutput(response, parseResult.GetValue(outputOption), "json");
+            WriteOutput(response, parseResult.GetValue(outputOption), "text");
             return response.Errors.Count == 0 ? 0 : 1;
         });
         return command;
@@ -203,11 +204,11 @@ internal static class ZakiraRecallProgram
     {
         var command = new Command("providers", "Provider capability discovery.");
         var listCommand = new Command("list", "List available providers and health state.");
+        var testCommand = new Command("test", "Validate a provider and show its resolved capabilities.");
         var profileOption = CreateStringOption("--profile", "Profile name.");
-        var outputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
-        var showCommand = new Command("show", "Show the resolved configuration.");
-        var showPathOption = CreateStringOption("--path", "Explicit config path.");
-        var showOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
+        var outputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
+        var testProviderArgument = CreateRequiredArgument<string>("name", "Provider name or alias.");
+        var testOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         listCommand.Add(profileOption);
         listCommand.Add(outputOption);
@@ -222,16 +223,43 @@ internal static class ZakiraRecallProgram
                 .Select(provider => new SearchProviderDescriptor
                 {
                     Name = provider.Name,
+                    Aliases = provider.Aliases,
+                    SetupUrl = provider.SetupUrl,
                     Capabilities = provider.Capabilities,
                     Health = healthTracker.GetSnapshot(provider.Name, profile.ProviderHealthCooldownSeconds)
                 })
                 .ToArray();
 
-            WriteOutput(providers, parseResult.GetValue(outputOption), "json");
+            WriteOutput(providers, parseResult.GetValue(outputOption), "text");
+            return 0;
+        });
+
+        testCommand.Add(testProviderArgument);
+        testCommand.Add(profileOption);
+        testCommand.Add(testOutputOption);
+        testCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, profileOption));
+            var registry = host.Services.GetRequiredService<ISearchProviderRegistry>();
+            var healthTracker = host.Services.GetRequiredService<IProviderHealthTracker>();
+            var resolver = host.Services.GetRequiredService<IProfileResolver>();
+            var profile = await resolver.ResolveAsync(parseResult.GetValue(profileOption), providerOverride: null, cancellationToken);
+            var provider = registry.GetRequiredProvider(parseResult.GetValue(testProviderArgument)!);
+            var descriptor = new SearchProviderDescriptor
+            {
+                Name = provider.Name,
+                Aliases = provider.Aliases,
+                SetupUrl = provider.SetupUrl,
+                Capabilities = provider.Capabilities,
+                Health = healthTracker.GetSnapshot(provider.Name, profile.ProviderHealthCooldownSeconds)
+            };
+
+            WriteOutput(descriptor, parseResult.GetValue(testOutputOption), "text");
             return 0;
         });
 
         command.Add(listCommand);
+        command.Add(testCommand);
         return command;
     }
 
@@ -279,10 +307,18 @@ internal static class ZakiraRecallProgram
             using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, profileOption));
             var writer = host.Services.GetRequiredService<IRecallConfigWriter>();
             var locator = host.Services.GetRequiredService<IRecallConfigLocator>();
-            var provider = parseResult.GetValue(providerOption) ?? "duckduckgo";
+            using var validationHost = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, profileOption));
+            var registry = validationHost.Services.GetRequiredService<ISearchProviderRegistry>();
+            var provider = registry.NormalizeProviderName(parseResult.GetValue(providerOption)) ?? registry.GetDefaultProviderName();
             var profileName = parseResult.GetValue(profileOption) ?? "default";
             var interactiveProfileName = parseResult.GetValue(interactiveProfileOption) ?? "interactive";
-            var fallbackProviders = parseResult.GetValue(fallbackProvidersOption) ?? [];
+            var fallbackProviders = (parseResult.GetValue(fallbackProvidersOption) ?? [])
+                .Select(registry.NormalizeProviderName)
+                .Where(static providerName => !string.IsNullOrWhiteSpace(providerName))
+                .Cast<string>()
+                .Where(providerName => !string.Equals(providerName, provider, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             var enableFallback = ParseNullableBool(parseResult.GetValue(enableFallbackOption), "--enable-fallback") ?? true;
             var channel = parseResult.GetValue(channelOption) ?? "msedge";
             var locale = parseResult.GetValue(localeOption) ?? "en-US";
@@ -319,7 +355,7 @@ internal static class ZakiraRecallProgram
                     {
                         Name = interactiveProfileName,
                         Channel = channel,
-                        DefaultProvider = provider == "duckduckgo" ? "duckduckgo-browser" : provider,
+                        DefaultProvider = provider,
                         Headless = false,
                         TimeoutSeconds = 45,
                         FallbackProviders = fallbackProviders,
@@ -386,7 +422,7 @@ internal static class ZakiraRecallProgram
         var initCooldownOption = CreateIntOption("--provider-health-cooldown", "Provider failure cooldown in seconds.");
         var initConcurrencyOption = CreateIntOption("--max-concurrent-fetches", "Maximum number of parallel page fetches.");
         var initProfileLogLevelOption = CreateStringOption("--profile-log-level", "Profile-specific log level.");
-        var initOutputOption = CreateStringOption("--output", "Output mode: json, text, or markdown.");
+        var initOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
 
         initCommand.Add(initNameArgument);
         initCommand.Add(initChannelOption);
@@ -417,7 +453,7 @@ internal static class ZakiraRecallProgram
                 cancellationToken);
 
             Directory.CreateDirectory(profile.UserDataDir);
-            WriteOutput(profile, parseResult.GetValue(initOutputOption), "json");
+            WriteOutput(profile, parseResult.GetValue(initOutputOption), "text");
             return 0;
         });
 
@@ -425,7 +461,8 @@ internal static class ZakiraRecallProgram
         var authNameArgument = CreateOptionalArgument<string?>("name", "Profile name.");
         var authProviderOption = CreateStringOption("--provider", "Provider override.");
         var authUrlOption = CreateStringOption("--url", "Optional URL to open for manual setup.");
-        var authOutputOption = CreateStringOption("--output", "Output mode: text or json.");
+        var authOutputOption = CreateStringOption("--output", "Output mode: text, json, markdown, or dump.");
+        var authNoWaitOption = CreateStringOption("--no-wait", "Close immediately after navigation without waiting for Enter: true or false.");
         var showCommand = new Command("show", "Show a resolved profile.");
         var showNameArgument = CreateOptionalArgument<string?>("name", "Profile name.");
         var showProviderOption = CreateStringOption("--provider", "Provider override.");
@@ -435,20 +472,34 @@ internal static class ZakiraRecallProgram
         authCommand.Add(authProviderOption);
         authCommand.Add(authUrlOption);
         authCommand.Add(authOutputOption);
+        authCommand.Add(authNoWaitOption);
         authCommand.SetAction(async (parseResult, cancellationToken) =>
         {
             var selectedProfile = parseResult.GetValue(authNameArgument);
             using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, selectedProfile));
             var bootstrapper = host.Services.GetRequiredService<IProfileBootstrapper>();
+            var registry = host.Services.GetRequiredService<ISearchProviderRegistry>();
             var browserSessionFactory = host.Services.GetRequiredService<IBrowserSessionFactory>();
             var profile = await bootstrapper.PrepareInteractiveAsync(selectedProfile, parseResult.GetValue(authProviderOption), cancellationToken);
+            var provider = registry.GetRequiredProvider(profile.DefaultProvider);
 
             await using var browserContext = await browserSessionFactory.CreateContextAsync(profile, cancellationToken);
             var page = browserContext.Pages.FirstOrDefault() ?? await browserContext.NewPageAsync();
-            var targetUrl = parseResult.GetValue(authUrlOption) ?? GetProviderSetupUrl(profile.DefaultProvider);
+            var targetUrl = parseResult.GetValue(authUrlOption) ?? provider.SetupUrl ?? "https://example.com";
             await page.GotoAsync(targetUrl);
-            Console.Error.WriteLine($"Interactive browser launched for profile '{profile.Name}'. Complete sign-in or consent, then press Enter to finish.");
-            Console.ReadLine();
+            Console.Error.WriteLine($"Interactive browser launched for profile '{profile.Name}' using provider '{provider.Name}'.");
+            Console.Error.WriteLine($"Opened: {targetUrl}");
+            if (provider.Capabilities.SupportsInteractiveSetup)
+            {
+                Console.Error.WriteLine("Complete any sign-in or consent flow in the browser.");
+            }
+
+            if (ParseNullableBool(parseResult.GetValue(authNoWaitOption), "--no-wait") != true)
+            {
+                Console.Error.WriteLine("Press Enter when setup is complete.");
+                Console.ReadLine();
+            }
+
             WriteOutput(profile, parseResult.GetValue(authOutputOption), "text");
             return 0;
         });
@@ -462,7 +513,7 @@ internal static class ZakiraRecallProgram
             using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, selectedProfile));
             var resolver = host.Services.GetRequiredService<IProfileResolver>();
             var profile = await resolver.ResolveAsync(selectedProfile, parseResult.GetValue(showProviderOption), cancellationToken);
-            WriteOutput(profile, parseResult.GetValue(showOutputOption), "json");
+            WriteOutput(profile, parseResult.GetValue(showOutputOption), "text");
             return 0;
         });
 
@@ -634,14 +685,6 @@ internal static class ZakiraRecallProgram
         throw new InvalidOperationException($"Option '{optionName}' expects true or false.");
     }
 
-    private static string GetProviderSetupUrl(string provider)
-        => provider.Trim().ToLowerInvariant() switch
-        {
-            "bing" => "https://www.bing.com",
-            "duckduckgo-browser" => "https://duckduckgo.com",
-            _ => "https://duckduckgo.com"
-        };
-
     private static void WriteOutput(object value, string? mode, string defaultMode)
     {
         var normalizedMode = NormalizeOutputMode(mode, defaultMode);
@@ -681,10 +724,11 @@ internal static class ZakiraRecallProgram
             SearchResponse response => response.Error?.Message ?? "No search results.",
             FetchResponse response when response.Success => $"{response.Title ?? response.FinalUrl}{Environment.NewLine}{response.FinalUrl}{Environment.NewLine}{response.Excerpt}".TrimEnd(),
             FetchResponse response => $"Fetch failed: {response.Error?.Message}",
-            ResearchResponse response when response.Citations.Count > 0 => string.Join(Environment.NewLine + Environment.NewLine, response.Citations.Select(citation => $"[{citation.Id}] {citation.Title}{Environment.NewLine}{citation.Url}{Environment.NewLine}{citation.Quote}".TrimEnd())),
+            ResearchResponse response when response.Citations.Count > 0 => FormatResearchText(response),
             ResearchResponse response => response.Errors.FirstOrDefault()?.Message ?? "No research sources.",
             RecallConfig config => $"Default profile: {config.DefaultProfile ?? "default"}{Environment.NewLine}Default provider: {config.DefaultProvider ?? "duckduckgo"}{Environment.NewLine}Profiles: {config.Profiles.Count}",
             ProfileDescriptor profile => $"Profile: {profile.Name}{Environment.NewLine}Provider: {profile.DefaultProvider}{Environment.NewLine}Channel: {profile.Channel}{Environment.NewLine}Headless: {profile.Headless}{Environment.NewLine}User data: {profile.UserDataDir}",
+            SearchProviderDescriptor provider => FormatProviderText(provider),
             SearchProviderDescriptor[] providers => string.Join(Environment.NewLine, providers.Select(provider => $"{provider.Name} | browser={provider.Capabilities.RequiresBrowser} | pagination={provider.Capabilities.SupportsPagination} | timeRange={provider.Capabilities.SupportsTimeRange} | safeSearch={provider.Capabilities.SupportsSafeSearch} | healthy={provider.Health?.IsHealthy}")),
             ProviderHealthSnapshot snapshot => $"Provider: {snapshot.Provider}{Environment.NewLine}Healthy: {snapshot.IsHealthy}{Environment.NewLine}Failures: {snapshot.ConsecutiveFailures}",
             _ => JsonSerializer.Serialize(value, JsonSupport.Options)
@@ -696,13 +740,71 @@ internal static class ZakiraRecallProgram
             SearchResponse response => string.Join(Environment.NewLine, response.Results.Select(result => $"- [{result.Title}]({result.Url}){(string.IsNullOrWhiteSpace(result.Snippet) ? string.Empty : $" - {result.Snippet}")}")),
             FetchResponse response when response.Success => $"# {response.Title ?? response.FinalUrl}{Environment.NewLine}{Environment.NewLine}{response.Text}",
             FetchResponse response => $"# Fetch Failed{Environment.NewLine}{Environment.NewLine}{response.Error?.Message}",
-            ResearchResponse response => string.Join(Environment.NewLine + Environment.NewLine, response.Citations.Select(citation => $"## {citation.Id}: [{citation.Title}]({citation.Url}){Environment.NewLine}{Environment.NewLine}{citation.Quote}".TrimEnd())),
+            ResearchResponse response => FormatResearchMarkdown(response),
             RecallConfig config => $"# Config{Environment.NewLine}{Environment.NewLine}- Default profile: `{config.DefaultProfile ?? "default"}`{Environment.NewLine}- Default provider: `{config.DefaultProvider ?? "duckduckgo"}`{Environment.NewLine}- Profiles: {config.Profiles.Count}",
             ProfileDescriptor profile => $"# Profile `{profile.Name}`{Environment.NewLine}{Environment.NewLine}- Provider: `{profile.DefaultProvider}`{Environment.NewLine}- Channel: `{profile.Channel}`{Environment.NewLine}- Headless: `{profile.Headless}`{Environment.NewLine}- User data: `{profile.UserDataDir}`",
+            SearchProviderDescriptor provider => FormatProviderMarkdown(provider),
             SearchProviderDescriptor[] providers => string.Join(Environment.NewLine, providers.Select(provider => $"- `{provider.Name}`: browser={provider.Capabilities.RequiresBrowser}, pagination={provider.Capabilities.SupportsPagination}, timeRange={provider.Capabilities.SupportsTimeRange}, safeSearch={provider.Capabilities.SupportsSafeSearch}, healthy={provider.Health?.IsHealthy}")),
             ProviderHealthSnapshot snapshot => $"# Provider Health `{snapshot.Provider}`{Environment.NewLine}{Environment.NewLine}- Healthy: `{snapshot.IsHealthy}`{Environment.NewLine}- Consecutive failures: `{snapshot.ConsecutiveFailures}`",
             _ => FormatText(value)
         };
+
+    private static string FormatProviderText(SearchProviderDescriptor provider)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Provider: {provider.Name}");
+        builder.AppendLine($"Aliases: {(provider.Aliases.Count == 0 ? "(none)" : string.Join(", ", provider.Aliases))}");
+        builder.AppendLine($"Setup URL: {provider.SetupUrl ?? "(none)"}");
+        builder.AppendLine($"Browser: {provider.Capabilities.RequiresBrowser}");
+        builder.AppendLine($"Pagination: {provider.Capabilities.SupportsPagination}");
+        builder.AppendLine($"Time range: {provider.Capabilities.SupportsTimeRange}");
+        builder.AppendLine($"Safe search: {provider.Capabilities.SupportsSafeSearch}");
+        builder.AppendLine($"Interactive setup: {provider.Capabilities.SupportsInteractiveSetup}");
+        if (provider.Health is not null)
+        {
+            builder.AppendLine($"Healthy: {provider.Health.IsHealthy}");
+            builder.Append($"Consecutive failures: {provider.Health.ConsecutiveFailures}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatResearchText(ResearchResponse response)
+    {
+        var sections = new List<string>();
+        if (!string.IsNullOrWhiteSpace(response.Summary))
+        {
+            sections.Add($"Summary{Environment.NewLine}{response.Summary}");
+        }
+
+        sections.AddRange(response.Citations.Select(citation => $"[{citation.Id}] {citation.Title}{Environment.NewLine}{citation.Url}{Environment.NewLine}{citation.Quote}".TrimEnd()));
+        return string.Join(Environment.NewLine + Environment.NewLine, sections);
+    }
+
+    private static string FormatResearchMarkdown(ResearchResponse response)
+    {
+        var sections = new List<string>();
+        if (!string.IsNullOrWhiteSpace(response.Summary))
+        {
+            sections.Add($"# Summary{Environment.NewLine}{Environment.NewLine}{response.Summary}");
+        }
+
+        sections.AddRange(response.Citations.Select(citation => $"## {citation.Id}: [{citation.Title}]({citation.Url}){Environment.NewLine}{Environment.NewLine}{citation.Quote}".TrimEnd()));
+        return string.Join(Environment.NewLine + Environment.NewLine, sections);
+    }
+
+    private static string FormatProviderMarkdown(SearchProviderDescriptor provider)
+        => $"# Provider `{provider.Name}`{Environment.NewLine}{Environment.NewLine}" +
+           $"- Aliases: {(provider.Aliases.Count == 0 ? "(none)" : string.Join(", ", provider.Aliases.Select(alias => $"`{alias}`")))}{Environment.NewLine}" +
+           $"- Setup URL: {(provider.SetupUrl is null ? "(none)" : $"`{provider.SetupUrl}`")}{Environment.NewLine}" +
+           $"- Browser: `{provider.Capabilities.RequiresBrowser}`{Environment.NewLine}" +
+           $"- Pagination: `{provider.Capabilities.SupportsPagination}`{Environment.NewLine}" +
+           $"- Time range: `{provider.Capabilities.SupportsTimeRange}`{Environment.NewLine}" +
+           $"- Safe search: `{provider.Capabilities.SupportsSafeSearch}`{Environment.NewLine}" +
+           $"- Interactive setup: `{provider.Capabilities.SupportsInteractiveSetup}`{Environment.NewLine}" +
+           (provider.Health is null
+               ? string.Empty
+               : $"- Healthy: `{provider.Health.IsHealthy}`{Environment.NewLine}- Consecutive failures: `{provider.Health.ConsecutiveFailures}`");
 
     private static Option<string?> CreateStringOption(string name, string description, bool recursive = false)
         => new(name)
@@ -843,6 +945,8 @@ internal sealed class RecallMcpTools(
             .Select(provider => new SearchProviderDescriptor
             {
                 Name = provider.Name,
+                Aliases = provider.Aliases,
+                SetupUrl = provider.SetupUrl,
                 Capabilities = provider.Capabilities,
                 Health = healthTracker.GetSnapshot(provider.Name, resolvedProfile.ProviderHealthCooldownSeconds)
             })
@@ -908,6 +1012,7 @@ internal sealed class RecallMcpTools(
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null)
     {
         var resolvedProfile = await profileResolver.ResolveAsync(profile, providerOverride: null);
-        return healthTracker.GetSnapshot(provider, resolvedProfile.ProviderHealthCooldownSeconds);
+        var normalizedProvider = providerRegistry.NormalizeProviderName(provider) ?? provider;
+        return healthTracker.GetSnapshot(normalizedProvider, resolvedProfile.ProviderHealthCooldownSeconds);
     }
 }

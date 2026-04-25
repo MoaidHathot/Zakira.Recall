@@ -95,6 +95,60 @@ public sealed class ResearchServiceTests
         ], fetchService.RequestedUrls);
     }
 
+    [Fact]
+    public async Task Prefers_Stronger_Non_Social_Sources_And_Builds_A_Summary()
+    {
+        var searchService = new FakeSearchService(results:
+        [
+            CreateResult(1, "https://www.linkedin.com/in/example"),
+            CreateResult(2, "https://example.dev"),
+            CreateResult(3, "https://www.facebook.com/example")
+        ]);
+        var fetchService = new FakeFetchService(customResponses: new Dictionary<string, FetchResponse>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://www.linkedin.com/in/example"] = CreateFetch("https://www.linkedin.com/in/example", "Join LinkedIn to view the full profile.", 8, "www.linkedin.com"),
+            ["https://example.dev"] = CreateFetch("https://example.dev", "Example Person is a principal engineer working on .NET and cloud systems. They speak at conferences and publish technical articles.", 19, "example.dev"),
+            ["https://www.facebook.com/example"] = CreateFetch("https://www.facebook.com/example", "Log into Facebook to start sharing and connecting.", 8, "www.facebook.com")
+        });
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        var response = await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "Example Person",
+            TopPagesToRead = 3
+        });
+
+        Assert.True(response.Success);
+        Assert.NotNull(response.Summary);
+        Assert.Contains("principal engineer", response.Summary!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("https://example.dev", response.Citations[0].Url);
+    }
+
+    [Fact]
+    public async Task Filters_Weak_Fetches_From_Successful_Research()
+    {
+        var searchService = new FakeSearchService(results:
+        [
+            CreateResult(1, "https://www.linkedin.com/in/example"),
+            CreateResult(2, "https://www.facebook.com/example")
+        ]);
+        var fetchService = new FakeFetchService(customResponses: new Dictionary<string, FetchResponse>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://www.linkedin.com/in/example"] = CreateFetch("https://www.linkedin.com/in/example", "Join LinkedIn to view the full profile.", 8, "www.linkedin.com"),
+            ["https://www.facebook.com/example"] = CreateFetch("https://www.facebook.com/example", "Log into Facebook to start sharing and connecting.", 8, "www.facebook.com")
+        });
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        var response = await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "Example Person",
+            TopPagesToRead = 2
+        });
+
+        Assert.False(response.Success);
+        Assert.Null(response.Summary);
+    }
+
     private static SearchResult CreateResult(int rank, string url)
         => new()
         {
@@ -103,6 +157,19 @@ public sealed class ResearchServiceTests
             Provider = "duckduckgo",
             Rank = rank,
             Snippet = $"Snippet {rank}"
+        };
+
+    private static FetchResponse CreateFetch(string url, string text, int wordCount, string domain)
+        => new()
+        {
+            Url = url,
+            FinalUrl = url,
+            Success = true,
+            Title = url,
+            Text = text,
+            Excerpt = text,
+            Domain = domain,
+            WordCount = wordCount
         };
 
     private sealed class FakeSearchService(IReadOnlyList<SearchResult>? results = null) : ISearchService
@@ -124,13 +191,18 @@ public sealed class ResearchServiceTests
         }
     }
 
-    private sealed class FakeFetchService(string? failUrl = null) : IFetchService
+    private sealed class FakeFetchService(string? failUrl = null, IReadOnlyDictionary<string, FetchResponse>? customResponses = null) : IFetchService
     {
         public List<string> RequestedUrls { get; } = [];
 
         public ValueTask<FetchResponse> FetchAsync(FetchRequest request, CancellationToken cancellationToken = default)
         {
             RequestedUrls.Add(request.Url);
+            if (customResponses is not null && customResponses.TryGetValue(request.Url, out var customResponse))
+            {
+                return ValueTask.FromResult(customResponse);
+            }
+
             if (string.Equals(request.Url, failUrl, StringComparison.OrdinalIgnoreCase))
             {
                 return ValueTask.FromResult(new FetchResponse

@@ -7,7 +7,8 @@ namespace Zakira.Recall.Core.Profiles;
 public sealed class ProfileBootstrapper(
     IRecallConfigLoader configLoader,
     IRecallConfigWriter configWriter,
-    IProfileResolver profileResolver) : IProfileBootstrapper
+    IProfileResolver profileResolver,
+    ISearchProviderRegistry providerRegistry) : IProfileBootstrapper
 {
     public async ValueTask<ProfileDescriptor> EnsureProfileAsync(
         string profileName,
@@ -27,17 +28,28 @@ public sealed class ProfileBootstrapper(
         var config = await configLoader.LoadAsync(cancellationToken: cancellationToken);
         var profiles = new Dictionary<string, RecallProfileConfig>(config.Profiles, StringComparer.OrdinalIgnoreCase);
         profiles.TryGetValue(profileName, out var existing);
+        var normalizedProvider = providerRegistry.NormalizeProviderName(provider)
+            ?? providerRegistry.NormalizeProviderName(existing?.DefaultProvider)
+            ?? providerRegistry.NormalizeProviderName(config.DefaultProvider)
+            ?? providerRegistry.GetDefaultProviderName();
+        var normalizedFallbackProviders = (fallbackProviders ?? existing?.FallbackProviders ?? config.FallbackProviders)
+            .Select(providerRegistry.NormalizeProviderName)
+            .Where(static providerName => !string.IsNullOrWhiteSpace(providerName))
+            .Cast<string>()
+            .Where(providerName => !string.Equals(providerName, normalizedProvider, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
         profiles[profileName] = new RecallProfileConfig
         {
             Name = profileName,
             Channel = channel ?? existing?.Channel ?? "msedge",
-            DefaultProvider = provider ?? existing?.DefaultProvider ?? config.DefaultProvider ?? "duckduckgo",
+            DefaultProvider = normalizedProvider,
             Headless = headless ?? existing?.Headless ?? false,
             UserDataDir = userDataDir ?? existing?.UserDataDir,
             Locale = existing?.Locale,
             TimeoutSeconds = existing?.TimeoutSeconds,
-            FallbackProviders = fallbackProviders ?? existing?.FallbackProviders ?? config.FallbackProviders,
+            FallbackProviders = normalizedFallbackProviders,
             EnableProviderFallback = enableFallback ?? existing?.EnableProviderFallback ?? config.EnableProviderFallback,
             ProviderHealthCooldownSeconds = providerHealthCooldownSeconds ?? existing?.ProviderHealthCooldownSeconds ?? config.ProviderHealthCooldownSeconds,
             MaxConcurrentFetches = maxConcurrentFetches ?? existing?.MaxConcurrentFetches ?? config.MaxConcurrentFetches,
