@@ -31,6 +31,10 @@ internal static class ZakiraRecallProgram
         var defaultProfileOption = CreateStringOption("--default-profile", "Default profile override.", recursive: true);
         var profilesRootOption = CreateStringOption("--profiles-root", "Override the profiles root directory.", recursive: true);
         var logLevelOption = CreateStringOption("--log-level", "Logging level override.", recursive: true);
+        var verboseOption = CreateBoolOption("--verbose", "Enable verbose (Debug) logging.", recursive: true);
+        var quietOption = CreateBoolOption("--quiet", "Suppress informational logs (Error level only).", recursive: true);
+        s_verboseOption = verboseOption;
+        s_quietOption = quietOption;
 
         var root = new RootCommand("Local CLI and MCP server for web search, fetch, and research workflows.");
         root.Add(configOption);
@@ -38,6 +42,8 @@ internal static class ZakiraRecallProgram
         root.Add(defaultProfileOption);
         root.Add(profilesRootOption);
         root.Add(logLevelOption);
+        root.Add(verboseOption);
+        root.Add(quietOption);
         root.Add(BuildSearchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildFetchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildResearchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
@@ -47,6 +53,9 @@ internal static class ZakiraRecallProgram
         root.Add(BuildMcpCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         return root;
     }
+
+    private static Option<bool>? s_verboseOption;
+    private static Option<bool>? s_quietOption;
 
     private static Command BuildSearchCommand(
         Option<string?> configOption,
@@ -322,7 +331,7 @@ internal static class ZakiraRecallProgram
             var enableFallback = ParseNullableBool(parseResult.GetValue(enableFallbackOption), "--enable-fallback") ?? true;
             var channel = parseResult.GetValue(channelOption) ?? "msedge";
             var locale = parseResult.GetValue(localeOption) ?? "en-US";
-            var configLogLevel = parseResult.GetValue(configLogLevelOption) ?? "Information";
+            var configLogLevel = parseResult.GetValue(configLogLevelOption) ?? "Warning";
 
             var config = new RecallConfig
             {
@@ -581,7 +590,9 @@ internal static class ZakiraRecallProgram
             parseResult.GetValue(defaultProfileOption),
             parseResult.GetValue(profilesRootOption),
             parseResult.GetValue(logLevelOption),
-            selectedProfileOption is null ? null : parseResult.GetValue(selectedProfileOption));
+            selectedProfileOption is null ? null : parseResult.GetValue(selectedProfileOption),
+            ReadFlag(parseResult, s_verboseOption),
+            ReadFlag(parseResult, s_quietOption));
 
     private static CliRuntimeOptions CreateRuntimeOptions(
         ParseResult parseResult,
@@ -597,17 +608,32 @@ internal static class ZakiraRecallProgram
             parseResult.GetValue(defaultProfileOption),
             parseResult.GetValue(profilesRootOption),
             parseResult.GetValue(logLevelOption),
-            selectedProfile);
+            selectedProfile,
+            ReadFlag(parseResult, s_verboseOption),
+            ReadFlag(parseResult, s_quietOption));
+
+    private static bool ReadFlag(ParseResult parseResult, Option<bool>? option)
+        => option is not null && parseResult.GetValue(option);
 
     private static LogLevel ResolveLogLevel(CliRuntimeOptions options)
     {
+        if (options.Verbose)
+        {
+            return LogLevel.Debug;
+        }
+
         if (TryParseLogLevel(options.LogLevel, out var explicitLevel))
         {
             return explicitLevel;
         }
 
+        if (options.Quiet)
+        {
+            return LogLevel.Error;
+        }
+
         var configuredLevel = ReadConfiguredLogLevel(options);
-        return TryParseLogLevel(configuredLevel, out var configured) ? configured : LogLevel.Information;
+        return TryParseLogLevel(configuredLevel, out var configured) ? configured : LogLevel.Warning;
     }
 
     private static string? ReadConfiguredLogLevel(CliRuntimeOptions options)
@@ -819,6 +845,15 @@ internal static class ZakiraRecallProgram
             Description = description
         };
 
+    private static Option<bool> CreateBoolOption(string name, string description, bool recursive = false)
+        => new(name)
+        {
+            Description = description,
+            Recursive = recursive,
+            Arity = ArgumentArity.ZeroOrOne,
+            DefaultValueFactory = _ => false
+        };
+
     private static Option<string[]> CreateStringListOption(string name, string description)
         => new(name)
         {
@@ -852,7 +887,9 @@ internal sealed record CliRuntimeOptions(
     string? DefaultProfile,
     string? ProfilesRoot,
     string? LogLevel,
-    string? SelectedProfile);
+    string? SelectedProfile,
+    bool Verbose = false,
+    bool Quiet = false);
 
 [McpServerToolType]
 internal sealed class RecallMcpTools(

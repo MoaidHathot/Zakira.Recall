@@ -89,4 +89,53 @@ public sealed class DuckDuckGoHtmlParserTests
         Assert.Single(results);
         Assert.Equal("One", results[0].Title);
     }
+
+    [Fact]
+    public void ParseResults_Does_Not_Drop_First_Result_When_Preceded_By_Spelling_Correction_Block()
+    {
+        // Regression: a non-result div before the first organic result
+        // (e.g. the "Including results for ..." notice) used to hijack the
+        // outer regex and cause the first result to be silently swallowed.
+        const string html = """
+        <!DOCTYPE html>
+        <html>
+        <body>
+          <div id="links" class="results">
+            <div class="msg msg--spelling">
+              <div id="did_you_mean">
+                Including results for <a href="/html/?q=turbophase"><b>turbophase</b></a>.
+              </div>
+            </div>
+            <div class="result results_links results_links_deep web-result ">
+              <div class="links_main links_deep result__body">
+                <h2 class="result__title">
+                  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2FMoaidHathot%2FTurbophrase&amp;rut=x">GitHub - MoaidHathot/Turbophrase</a>
+                </h2>
+                <a class="result__url" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2FMoaidHathot%2FTurbophrase&amp;rut=x">github.com/MoaidHathot/Turbophrase</a>
+                <a class="result__snippet" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fgithub.com%2FMoaidHathot%2FTurbophrase&amp;rut=x">Turbophrase AI-powered text transformation tool.</a>
+                <div class="clear"></div>
+              </div>
+            </div>
+            <div class="result results_links results_links_deep web-result ">
+              <div class="links_main links_deep result__body">
+                <h2 class="result__title">
+                  <a class="result__a" href="https://powerphase.com/">Powerphase</a>
+                </h2>
+                <a class="result__url" href="https://powerphase.com/">powerphase.com</a>
+                <a class="result__snippet" href="https://powerphase.com/">Gas turbine optimization.</a>
+                <div class="clear"></div>
+              </div>
+            </div>
+          </div>
+        </body>
+        </html>
+        """;
+
+        var results = DuckDuckGoHtmlParser.ParseResults(html, maxResults: 10);
+
+        Assert.Equal(2, results.Count);
+        Assert.Equal("GitHub - MoaidHathot/Turbophrase", results[0].Title);
+        Assert.Equal("https://github.com/MoaidHathot/Turbophrase", results[0].Url);
+        Assert.Equal("Powerphase", results[1].Title);
+    }
 }

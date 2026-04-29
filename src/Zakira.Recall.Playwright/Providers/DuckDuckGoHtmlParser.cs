@@ -6,7 +6,8 @@ namespace Zakira.Recall.Playwright.Providers;
 
 internal static class DuckDuckGoHtmlParser
 {
-    private static readonly Regex ResultPattern = new("<div\\s+class=\"(?<class>[^\"]*)\"[^>]*>(?<content>.*?)<div\\s+class=\"clear\"></div>\\s*</div>\\s*</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
+    private static readonly Regex DivOpenerPattern = new("<div\\s+class=\"(?<class>[^\"]*)\"[^>]*>", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex ResultTerminatorPattern = new("<div\\s+class=\"clear\"\\s*>\\s*</div>\\s*</div>\\s*</div>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex TitlePattern = new("<a[^>]*class=\"[^\"]*\\bresult__a\\b[^\"]*\"[^>]*href=\"(?<href>[^\"]+)\"[^>]*>(?<text>.*?)</a>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex DisplayUrlPattern = new("<(?:a|span)[^>]*class=\"[^\"]*\\bresult__url\\b[^\"]*\"[^>]*>(?<text>.*?)</(?:a|span)>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
     private static readonly Regex SnippetPattern = new("<(?:a|div|span)[^>]*class=\"[^\"]*\\bresult__snippet\\b[^\"]*\"[^>]*>(?<text>.*?)</(?:a|div|span)>", RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.Compiled);
@@ -67,18 +68,32 @@ internal static class DuckDuckGoHtmlParser
 
     private static IReadOnlyList<string> SplitIntoResultSegments(string html)
     {
-        var matches = ResultPattern.Matches(html);
+        // Iterate over every <div class="..."> opener and only emit a segment
+        // when the class identifies an organic result. For each such opener we
+        // independently locate the next "<div class=\"clear\"></div></div></div>"
+        // terminator. This avoids the prior single-regex approach whose
+        // non-greedy match could be hijacked by an earlier non-result div
+        // (e.g. a "Including results for ..." spelling-correction notice),
+        // silently swallowing the first real result.
         var segments = new List<string>();
+        var openers = DivOpenerPattern.Matches(html);
 
-        foreach (Match match in matches)
+        foreach (Match opener in openers)
         {
-            var classValue = match.Groups["class"].Value;
+            var classValue = opener.Groups["class"].Value;
             if (!ContainsCssClass(classValue, "result") || !OrganicClassPattern.IsMatch(classValue))
             {
                 continue;
             }
 
-            segments.Add(match.Groups["content"].Value);
+            var contentStart = opener.Index + opener.Length;
+            var terminator = ResultTerminatorPattern.Match(html, contentStart);
+            if (!terminator.Success)
+            {
+                continue;
+            }
+
+            segments.Add(html.Substring(contentStart, terminator.Index - contentStart));
         }
 
         return segments;
