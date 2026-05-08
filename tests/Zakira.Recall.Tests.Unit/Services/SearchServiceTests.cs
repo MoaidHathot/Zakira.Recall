@@ -92,6 +92,26 @@ public sealed class SearchServiceTests
         Assert.True(response.Attempts[1].Success);
     }
 
+    [Fact]
+    public async Task Normalizes_Fallback_Aliases_And_Dedupes_Primary_Provider()
+    {
+        var resolver = new FakeProfileResolver(fallbackProviders: []);
+        var providers = new FakeSearchProviderRegistry(
+            new EmptySearchProvider("duckduckgo", ["ddg"]),
+            new ReturningSearchProvider("bing"));
+        var service = new SearchService(resolver, providers, new FakeProviderHealthTracker(), NullLogger<SearchService>.Instance);
+
+        var response = await service.SearchAsync(new SearchRequest
+        {
+            Query = "test",
+            FallbackProviders = ["ddg", "bing"]
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal("bing", response.Provider);
+        Assert.Equal(["duckduckgo", "bing"], response.Attempts.Select(static attempt => attempt.Provider).ToArray());
+    }
+
     private sealed class FakeProfileResolver(IReadOnlyList<string>? fallbackProviders = null) : IProfileResolver
     {
         public ValueTask<ProfileDescriptor> ResolveAsync(string? profileName, string? providerOverride, CancellationToken cancellationToken = default)
@@ -134,16 +154,21 @@ public sealed class SearchServiceTests
     private sealed class FakeSearchProviderRegistry(params ISearchProvider[] providers) : ISearchProviderRegistry
     {
         private readonly Dictionary<string, ISearchProvider> _providers = providers.ToDictionary(static provider => provider.Name, StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, ISearchProvider> _lookup = providers
+            .SelectMany(static provider => provider.Aliases.Append(provider.Name).Select(alias => (alias, provider)))
+            .ToDictionary(static item => item.alias, static item => item.provider, StringComparer.OrdinalIgnoreCase);
 
-        public ISearchProvider GetRequiredProvider(string providerName) => _providers[providerName];
+        public ISearchProvider GetRequiredProvider(string providerName) => _lookup[providerName];
 
         public bool TryGetProvider(string providerName, out ISearchProvider? provider)
-            => _providers.TryGetValue(providerName, out provider);
+            => _lookup.TryGetValue(providerName, out provider);
 
         public string? NormalizeProviderName(string? providerName)
             => string.IsNullOrWhiteSpace(providerName)
                 ? null
-                : _providers.Keys.FirstOrDefault(name => string.Equals(name, providerName.Trim(), StringComparison.OrdinalIgnoreCase));
+                : _lookup.TryGetValue(providerName.Trim(), out var provider)
+                    ? provider.Name
+                    : null;
 
         public string GetDefaultProviderName() => _providers.Keys.OrderBy(static name => name, StringComparer.OrdinalIgnoreCase).First();
 
@@ -160,6 +185,18 @@ public sealed class SearchServiceTests
 
         public ValueTask<IReadOnlyList<SearchResult>> SearchAsync(SearchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken = default)
             => ValueTask.FromException<IReadOnlyList<SearchResult>>(new InvalidOperationException("boom"));
+    }
+
+    private sealed class EmptySearchProvider(string name, IReadOnlyList<string>? aliases = null) : ISearchProvider
+    {
+        public string Name => name;
+
+        public IReadOnlyList<string> Aliases => aliases ?? [];
+
+        public SearchProviderCapabilities Capabilities => new();
+
+        public ValueTask<IReadOnlyList<SearchResult>> SearchAsync(SearchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<IReadOnlyList<SearchResult>>([]);
     }
 
     private sealed class ReturningSearchProvider(string name) : ISearchProvider

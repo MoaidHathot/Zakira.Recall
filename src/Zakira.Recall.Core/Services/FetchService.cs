@@ -23,7 +23,15 @@ public sealed class FetchService(IProfileResolver profileResolver, IPageFetcher 
         {
             FetchServiceLogging.FetchStarting(logger, normalizedUrl, profile.Name);
             var response = await pageFetcher.FetchAsync(normalizedRequest, profile, cancellationToken);
-            FetchServiceLogging.FetchSucceeded(logger, normalizedUrl);
+            if (response.Success)
+            {
+                FetchServiceLogging.FetchSucceeded(logger, normalizedUrl);
+            }
+            else if (response.Error is not null)
+            {
+                FetchServiceLogging.FetchFailed(logger, new InvalidOperationException(response.Error.Message), normalizedUrl);
+            }
+
             return response;
         }
         catch (Exception ex)

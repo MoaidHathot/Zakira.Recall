@@ -12,6 +12,7 @@ Supports:
 - pluggable provider discovery with alias support
 - Playwright-backed search and fetch
 - structured citations for research results
+- repeatable quality evaluation reports for search/research results
 - JSON, text, Markdown, and Dumpify CLI output modes
 - interactive browser profile setup for sign-in and consent flows
 - config and profile inspection commands
@@ -39,6 +40,7 @@ recall fetch "https://example.com"
 recall fetch "https://example.com" --output markdown
 recall research "best local mcp web search tools" --domain-diversity true
 recall research "playwright search providers" --fallback-provider bing --max-concurrent-fetches 4 --output dump
+recall eval run examples/eval-dataset.json --provider bing --output markdown --report artifacts/eval-report.md
 recall config init
 recall config show --output dump
 recall providers list --output json
@@ -234,6 +236,37 @@ recall research <query> \
   [--domain-diversity <true|false>] \
   [--output <json|text|markdown|dump>]
 ```
+
+Evaluation options:
+
+```powershell
+recall eval run <dataset.json> \
+  [--provider <name>] \
+  [--profile <name>] \
+  [--limit <n>] \
+  [--top-pages <n>] \
+  [--fallback <true|false>] \
+  [--fallback-provider <name> ...] \
+  [--report <path>] \
+  [--fail-under <score>] \
+  [--output <json|text|markdown|dump>]
+
+recall eval score <dataset.json> <responses.json> \
+  [--report <path>] \
+  [--fail-under <score>] \
+  [--output <json|text|markdown|dump>]
+```
+
+`eval run` executes live research for each case in the dataset and scores the result. `eval score` scores previously captured `ResearchResponse` objects without making live web requests.
+
+Dataset cases can define:
+
+- `query`: the research query to run
+- `expectedDomains`: domains that should appear in the search results
+- `requiredTerms`: terms that should appear in the search, fetch, citation, or summary text
+- `badDomains`: domains that should not appear
+
+Start with `examples/eval-dataset.json`, then add real failure cases as they are found.
 
 Profile inspection options:
 

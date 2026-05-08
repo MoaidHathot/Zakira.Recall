@@ -8,7 +8,7 @@ namespace Zakira.Recall.Tests.Unit.Services;
 public sealed class ResearchServiceTests
 {
     [Fact]
-    public async Task Reads_Only_Top_Pages_Requested()
+    public async Task Returns_Only_Top_Pages_Requested_After_Oversampling()
     {
         var searchService = new FakeSearchService();
         var fetchService = new FakeFetchService();
@@ -23,7 +23,7 @@ public sealed class ResearchServiceTests
 
         Assert.Equal(5, response.SearchResults.Count);
         Assert.Equal(2, response.Sources.Count);
-        Assert.Equal(2, fetchService.RequestedUrls.Count);
+        Assert.Equal(5, fetchService.RequestedUrls.Count);
         Assert.Equal(2, response.Citations.Count);
     }
 
@@ -92,7 +92,7 @@ public sealed class ResearchServiceTests
         Assert.Equal([
             "https://example.com/1",
             "https://contoso.com/1"
-        ], fetchService.RequestedUrls);
+        ], fetchService.RequestedUrls.Take(2).ToArray());
     }
 
     [Fact]
@@ -147,6 +147,54 @@ public sealed class ResearchServiceTests
 
         Assert.False(response.Success);
         Assert.Null(response.Summary);
+    }
+
+    [Fact]
+    public async Task Returns_Unsuccessful_When_No_Strong_Sources_Are_Found()
+    {
+        var searchService = new FakeSearchService(results: []);
+        var fetchService = new FakeFetchService();
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        var response = await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "no results",
+            TopPagesToRead = 2
+        });
+
+        Assert.False(response.Success);
+        Assert.Empty(response.Sources);
+        Assert.Empty(fetchService.RequestedUrls);
+    }
+
+    [Fact]
+    public async Task Oversamples_Search_Results_To_Find_Strong_Sources()
+    {
+        var searchService = new FakeSearchService(results:
+        [
+            CreateResult(1, "https://www.linkedin.com/in/example"),
+            CreateResult(2, "https://www.facebook.com/example"),
+            CreateResult(3, "https://example.dev")
+        ]);
+        var fetchService = new FakeFetchService(customResponses: new Dictionary<string, FetchResponse>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://www.linkedin.com/in/example"] = CreateFetch("https://www.linkedin.com/in/example", "Join LinkedIn to view the full profile.", 8, "www.linkedin.com"),
+            ["https://www.facebook.com/example"] = CreateFetch("https://www.facebook.com/example", "Log into Facebook to start sharing and connecting.", 8, "www.facebook.com"),
+            ["https://example.dev"] = CreateFetch("https://example.dev", "Example Person is a principal engineer working on .NET and cloud systems. They speak at conferences and publish technical articles.", 19, "example.dev")
+        });
+        var service = new ResearchService(searchService, fetchService, new FakeProfileResolver(), NullLogger<ResearchService>.Instance);
+
+        var response = await service.ResearchAsync(new ResearchRequest
+        {
+            Query = "Example Person",
+            TopPagesToRead = 1,
+            EnforceDomainDiversity = true
+        });
+
+        Assert.True(response.Success);
+        Assert.Equal(3, fetchService.RequestedUrls.Count);
+        Assert.Single(response.Sources);
+        Assert.Equal("https://example.dev", response.Sources[0].Fetch.FinalUrl);
     }
 
     private static SearchResult CreateResult(int rank, string url)
@@ -226,10 +274,10 @@ public sealed class ResearchServiceTests
                 FinalUrl = request.Url,
                 Success = true,
                 Title = request.Url,
-                Text = "content",
-                Excerpt = "content",
+                Text = "Default fetched content has enough words to be treated as a usable source for tests.",
+                Excerpt = "Default fetched content has enough words to be treated as a usable source for tests.",
                 Domain = "example.com",
-                WordCount = 1
+                WordCount = 15
             });
         }
     }

@@ -47,6 +47,7 @@ internal static class ZakiraRecallProgram
         root.Add(BuildSearchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildFetchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildResearchCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
+        root.Add(BuildEvalCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildProvidersCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildConfigCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
         root.Add(BuildProfileCommand(configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption));
@@ -104,7 +105,7 @@ internal static class ZakiraRecallProgram
             }, cancellationToken);
 
             WriteOutput(response, parseResult.GetValue(outputOption), "text");
-            return response.Error is null ? 0 : 1;
+            return response.Success ? 0 : 1;
         });
         return command;
     }
@@ -199,8 +200,102 @@ internal static class ZakiraRecallProgram
             }, cancellationToken);
 
             WriteOutput(response, parseResult.GetValue(outputOption), "text");
-            return response.Errors.Count == 0 ? 0 : 1;
+            return response.Success ? 0 : 1;
         });
+        return command;
+    }
+
+    private static Command BuildEvalCommand(
+        Option<string?> configOption,
+        Option<string?> defaultProviderOption,
+        Option<string?> defaultProfileOption,
+        Option<string?> profilesRootOption,
+        Option<string?> logLevelOption)
+    {
+        var command = new Command("eval", "Evaluate research quality against a query dataset.");
+
+        var runCommand = new Command("run", "Run live research for every dataset case and score the results.");
+        var runDatasetArgument = CreateRequiredArgument<string>("dataset", "Path to an evaluation dataset JSON file.");
+        var providerOption = CreateStringOption("--provider", "Provider override.");
+        var profileOption = CreateStringOption("--profile", "Profile name.");
+        var limitOption = CreateIntOption("--limit", "Maximum number of search results per case.");
+        var topPagesOption = CreateIntOption("--top-pages", "Number of top pages to fetch per case.");
+        var pageOption = CreateIntOption("--page", "Result page number.");
+        var timeRangeOption = CreateStringOption("--time-range", "Optional time range such as day, week, month, or year.");
+        var safeSearchOption = CreateStringOption("--safe-search", "Safe search override: true or false.");
+        var fallbackOption = CreateStringOption("--fallback", "Provider fallback override: true or false.");
+        var fallbackProvidersOption = CreateStringListOption("--fallback-provider", "Fallback provider name.");
+        var concurrencyOption = CreateIntOption("--max-concurrent-fetches", "Maximum number of parallel fetches.");
+        var domainDiversityOption = CreateStringOption("--domain-diversity", "Prefer unique domains when selecting pages to fetch: true or false.");
+        var runOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
+        var runReportOption = CreateStringOption("--report", "Optional file path to write the report.");
+        var runFailUnderOption = CreateIntOption("--fail-under", "Return a non-zero exit code if the average score is below this value.");
+
+        runCommand.Add(runDatasetArgument);
+        runCommand.Add(providerOption);
+        runCommand.Add(profileOption);
+        runCommand.Add(limitOption);
+        runCommand.Add(topPagesOption);
+        runCommand.Add(pageOption);
+        runCommand.Add(timeRangeOption);
+        runCommand.Add(safeSearchOption);
+        runCommand.Add(fallbackOption);
+        runCommand.Add(fallbackProvidersOption);
+        runCommand.Add(concurrencyOption);
+        runCommand.Add(domainDiversityOption);
+        runCommand.Add(runOutputOption);
+        runCommand.Add(runReportOption);
+        runCommand.Add(runFailUnderOption);
+        runCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            using var host = BuildHost(CreateRuntimeOptions(parseResult, configOption, defaultProviderOption, defaultProfileOption, profilesRootOption, logLevelOption, profileOption));
+            var service = host.Services.GetRequiredService<IResearchService>();
+            var dataset = await EvalDataset.LoadAsync(parseResult.GetValue(runDatasetArgument)!, cancellationToken);
+            var options = new EvalRunOptions(
+                Provider: parseResult.GetValue(providerOption),
+                Profile: parseResult.GetValue(profileOption),
+                MaxResults: parseResult.GetValue(limitOption) ?? 8,
+                TopPagesToRead: parseResult.GetValue(topPagesOption) ?? 3,
+                Page: parseResult.GetValue(pageOption) ?? 1,
+                TimeRange: parseResult.GetValue(timeRangeOption),
+                SafeSearch: ParseNullableBool(parseResult.GetValue(safeSearchOption), "--safe-search"),
+                EnableFallback: ParseNullableBool(parseResult.GetValue(fallbackOption), "--fallback"),
+                FallbackProviders: parseResult.GetValue(fallbackProvidersOption) ?? [],
+                MaxConcurrentFetches: parseResult.GetValue(concurrencyOption),
+                EnforceDomainDiversity: ParseNullableBool(parseResult.GetValue(domainDiversityOption), "--domain-diversity") ?? true,
+                FailUnder: parseResult.GetValue(runFailUnderOption));
+            var report = await EvalRunner.RunAsync(service, dataset, options, cancellationToken);
+
+            await WriteReportFileAsync(report, parseResult.GetValue(runReportOption), parseResult.GetValue(runOutputOption), "markdown", cancellationToken);
+            WriteOutput(report, parseResult.GetValue(runOutputOption), "markdown");
+            return report.Passed == false ? 1 : 0;
+        });
+
+        var scoreCommand = new Command("score", "Score previously captured research responses without running live web requests.");
+        var scoreDatasetArgument = CreateRequiredArgument<string>("dataset", "Path to an evaluation dataset JSON file.");
+        var responsesArgument = CreateRequiredArgument<string>("responses", "Path to recorded research responses JSON file.");
+        var scoreOutputOption = CreateStringOption("--output", "Output mode: json, text, markdown, or dump.");
+        var scoreReportOption = CreateStringOption("--report", "Optional file path to write the report.");
+        var scoreFailUnderOption = CreateIntOption("--fail-under", "Return a non-zero exit code if the average score is below this value.");
+
+        scoreCommand.Add(scoreDatasetArgument);
+        scoreCommand.Add(responsesArgument);
+        scoreCommand.Add(scoreOutputOption);
+        scoreCommand.Add(scoreReportOption);
+        scoreCommand.Add(scoreFailUnderOption);
+        scoreCommand.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var dataset = await EvalDataset.LoadAsync(parseResult.GetValue(scoreDatasetArgument)!, cancellationToken);
+            var responses = await EvalResponseSet.LoadAsync(parseResult.GetValue(responsesArgument)!, cancellationToken);
+            var report = EvalRunner.ScoreRecorded(dataset, responses, parseResult.GetValue(scoreFailUnderOption));
+
+            await WriteReportFileAsync(report, parseResult.GetValue(scoreReportOption), parseResult.GetValue(scoreOutputOption), "markdown", cancellationToken);
+            WriteOutput(report, parseResult.GetValue(scoreOutputOption), "markdown");
+            return report.Passed == false ? 1 : 0;
+        });
+
+        command.Add(runCommand);
+        command.Add(scoreCommand);
         return command;
     }
 
@@ -713,15 +808,36 @@ internal static class ZakiraRecallProgram
 
     private static void WriteOutput(object value, string? mode, string defaultMode)
     {
+        Console.Out.WriteLine(FormatOutput(value, mode, defaultMode));
+    }
+
+    private static string FormatOutput(object value, string? mode, string defaultMode)
+    {
         var normalizedMode = NormalizeOutputMode(mode, defaultMode);
-        var text = normalizedMode switch
+        return normalizedMode switch
         {
             "dump" => value.DumpText(),
             "json" => JsonSerializer.Serialize(value, JsonSupport.Options),
             "markdown" => FormatMarkdown(value),
             _ => FormatText(value)
         };
-        Console.Out.WriteLine(text);
+    }
+
+    private static async Task WriteReportFileAsync(object value, string? path, string? mode, string defaultMode, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        var directory = Path.GetDirectoryName(fullPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        await File.WriteAllTextAsync(fullPath, FormatOutput(value, mode, defaultMode) + Environment.NewLine, cancellationToken);
     }
 
     private static string NormalizeOutputMode(string? mode, string defaultMode)
@@ -752,6 +868,7 @@ internal static class ZakiraRecallProgram
             FetchResponse response => $"Fetch failed: {response.Error?.Message}",
             ResearchResponse response when response.Citations.Count > 0 => FormatResearchText(response),
             ResearchResponse response => response.Errors.FirstOrDefault()?.Message ?? "No research sources.",
+            EvalReport report => EvalReportFormatter.FormatText(report),
             RecallConfig config => $"Default profile: {config.DefaultProfile ?? "default"}{Environment.NewLine}Default provider: {config.DefaultProvider ?? "duckduckgo"}{Environment.NewLine}Profiles: {config.Profiles.Count}",
             ProfileDescriptor profile => $"Profile: {profile.Name}{Environment.NewLine}Provider: {profile.DefaultProvider}{Environment.NewLine}Channel: {profile.Channel}{Environment.NewLine}Headless: {profile.Headless}{Environment.NewLine}User data: {profile.UserDataDir}",
             SearchProviderDescriptor provider => FormatProviderText(provider),
@@ -767,6 +884,7 @@ internal static class ZakiraRecallProgram
             FetchResponse response when response.Success => $"# {response.Title ?? response.FinalUrl}{Environment.NewLine}{Environment.NewLine}{response.Text}",
             FetchResponse response => $"# Fetch Failed{Environment.NewLine}{Environment.NewLine}{response.Error?.Message}",
             ResearchResponse response => FormatResearchMarkdown(response),
+            EvalReport report => EvalReportFormatter.FormatMarkdown(report),
             RecallConfig config => $"# Config{Environment.NewLine}{Environment.NewLine}- Default profile: `{config.DefaultProfile ?? "default"}`{Environment.NewLine}- Default provider: `{config.DefaultProvider ?? "duckduckgo"}`{Environment.NewLine}- Profiles: {config.Profiles.Count}",
             ProfileDescriptor profile => $"# Profile `{profile.Name}`{Environment.NewLine}{Environment.NewLine}- Provider: `{profile.DefaultProvider}`{Environment.NewLine}- Channel: `{profile.Channel}`{Environment.NewLine}- Headless: `{profile.Headless}`{Environment.NewLine}- User data: `{profile.UserDataDir}`",
             SearchProviderDescriptor provider => FormatProviderMarkdown(provider),
@@ -879,6 +997,12 @@ internal static class ZakiraRecallProgram
 internal static class JsonSupport
 {
     public static readonly JsonSerializerOptions Options = new() { WriteIndented = true };
+
+    public static readonly JsonSerializerOptions CaseInsensitiveOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true
+    };
 }
 
 internal sealed record CliRuntimeOptions(
@@ -890,6 +1014,690 @@ internal sealed record CliRuntimeOptions(
     string? SelectedProfile,
     bool Verbose = false,
     bool Quiet = false);
+
+internal sealed record EvalRunOptions(
+    string? Provider,
+    string? Profile,
+    int MaxResults,
+    int TopPagesToRead,
+    int Page,
+    string? TimeRange,
+    bool? SafeSearch,
+    bool? EnableFallback,
+    IReadOnlyList<string> FallbackProviders,
+    int? MaxConcurrentFetches,
+    bool EnforceDomainDiversity,
+    int? FailUnder);
+
+internal sealed class EvalDataset
+{
+    public string? Name { get; init; }
+
+    public string? Description { get; init; }
+
+    public IReadOnlyList<EvalCase> Cases { get; init; } = [];
+
+    public static async Task<EvalDataset> LoadAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        var dataset = await JsonSerializer.DeserializeAsync<EvalDataset>(stream, JsonSupport.CaseInsensitiveOptions, cancellationToken) ?? new EvalDataset();
+        if (dataset.Cases.Count == 0)
+        {
+            throw new InvalidOperationException($"Evaluation dataset '{path}' does not contain any cases.");
+        }
+
+        var missingQuery = dataset.Cases.FirstOrDefault(evalCase => string.IsNullOrWhiteSpace(evalCase.Query));
+        if (missingQuery is not null)
+        {
+            throw new InvalidOperationException($"Evaluation dataset '{path}' contains a case without a query.");
+        }
+
+        return dataset;
+    }
+}
+
+internal sealed class EvalCase
+{
+    public string? Id { get; init; }
+
+    public required string Query { get; init; }
+
+    public string? Category { get; init; }
+
+    public IReadOnlyList<string> ExpectedDomains { get; init; } = [];
+
+    public IReadOnlyList<string> RequiredTerms { get; init; } = [];
+
+    public IReadOnlyList<string> BadDomains { get; init; } = [];
+
+    public string? Notes { get; init; }
+}
+
+internal sealed class EvalResponseSet
+{
+    public IReadOnlyList<EvalRecordedResponse> Responses { get; init; } = [];
+
+    public static async Task<EvalResponseSet> LoadAsync(string path, CancellationToken cancellationToken)
+    {
+        var json = await File.ReadAllTextAsync(path, cancellationToken);
+        if (json.TrimStart().StartsWith('['))
+        {
+            var responses = JsonSerializer.Deserialize<EvalRecordedResponse[]>(json, JsonSupport.CaseInsensitiveOptions) ?? [];
+            return new EvalResponseSet { Responses = responses };
+        }
+
+        return JsonSerializer.Deserialize<EvalResponseSet>(json, JsonSupport.CaseInsensitiveOptions) ?? new EvalResponseSet();
+    }
+}
+
+internal sealed class EvalRecordedResponse
+{
+    public string? Id { get; init; }
+
+    public string? Query { get; init; }
+
+    public required ResearchResponse Response { get; init; }
+}
+
+internal sealed class EvalReport
+{
+    public string? Dataset { get; init; }
+
+    public string? Description { get; init; }
+
+    public DateTimeOffset GeneratedAt { get; init; }
+
+    public int CaseCount { get; init; }
+
+    public double AverageScore { get; init; }
+
+    public int? FailUnder { get; init; }
+
+    public bool Passed { get; init; }
+
+    public EvalSummaryMetrics Summary { get; init; } = new();
+
+    public IReadOnlyList<EvalCaseResult> Cases { get; init; } = [];
+}
+
+internal sealed class EvalSummaryMetrics
+{
+    public double SuccessRate { get; init; }
+
+    public double ExpectedDomainHitRate { get; init; }
+
+    public double RequiredTermHitRate { get; init; }
+
+    public double BadDomainAvoidanceRate { get; init; }
+
+    public double FetchSuccessRate { get; init; }
+
+    public double AverageUniqueFetchedDomains { get; init; }
+}
+
+internal sealed class EvalCaseResult
+{
+    public string Id { get; init; } = string.Empty;
+
+    public required string Query { get; init; }
+
+    public string? Category { get; init; }
+
+    public string? Provider { get; init; }
+
+    public string? Profile { get; init; }
+
+    public bool Success { get; init; }
+
+    public int Score { get; init; }
+
+    public IReadOnlyList<string> Reasons { get; init; } = [];
+
+    public EvalCaseMetrics Metrics { get; init; } = new();
+
+    public IReadOnlyList<EvalResultSnapshot> SearchResults { get; init; } = [];
+
+    public IReadOnlyList<EvalSourceSnapshot> Sources { get; init; } = [];
+
+    public string? Summary { get; init; }
+}
+
+internal sealed class EvalCaseMetrics
+{
+    public int SearchResultCount { get; init; }
+
+    public int SourceCount { get; init; }
+
+    public int CitationCount { get; init; }
+
+    public int FetchSuccessCount { get; init; }
+
+    public int WeakSourceCount { get; init; }
+
+    public int UniqueFetchedDomainCount { get; init; }
+
+    public bool ExpectedDomainFound { get; init; }
+
+    public int? ExpectedDomainBestRank { get; init; }
+
+    public bool RequiredTermsFound { get; init; }
+
+    public bool RequiredTermConfigured { get; init; }
+
+    public IReadOnlyList<string> MissingRequiredTerms { get; init; } = [];
+
+    public int BadDomainHitCount { get; init; }
+}
+
+internal sealed class EvalResultSnapshot
+{
+    public int Rank { get; init; }
+
+    public required string Title { get; init; }
+
+    public required string Url { get; init; }
+
+    public string? Domain { get; init; }
+
+    public string? Snippet { get; init; }
+}
+
+internal sealed class EvalSourceSnapshot
+{
+    public required string CitationId { get; init; }
+
+    public required string Url { get; init; }
+
+    public string? Domain { get; init; }
+
+    public bool FetchSuccess { get; init; }
+
+    public int WordCount { get; init; }
+
+    public bool Weak { get; init; }
+
+    public string? Excerpt { get; init; }
+}
+
+internal static class EvalRunner
+{
+    public static async Task<EvalReport> RunAsync(IResearchService researchService, EvalDataset dataset, EvalRunOptions options, CancellationToken cancellationToken)
+    {
+        var results = new List<EvalCaseResult>(dataset.Cases.Count);
+        foreach (var evalCase in dataset.Cases)
+        {
+            var response = await researchService.ResearchAsync(new ResearchRequest
+            {
+                Query = evalCase.Query,
+                Provider = options.Provider,
+                Profile = options.Profile,
+                MaxResults = options.MaxResults,
+                TopPagesToRead = options.TopPagesToRead,
+                Page = options.Page,
+                TimeRange = options.TimeRange,
+                SafeSearch = options.SafeSearch,
+                EnableFallback = options.EnableFallback,
+                FallbackProviders = options.FallbackProviders,
+                MaxConcurrentFetches = options.MaxConcurrentFetches,
+                EnforceDomainDiversity = options.EnforceDomainDiversity
+            }, cancellationToken);
+
+            results.Add(EvalScorer.Score(evalCase, response));
+        }
+
+        return BuildReport(dataset, results, options.FailUnder);
+    }
+
+    public static EvalReport ScoreRecorded(EvalDataset dataset, EvalResponseSet responseSet, int? failUnder)
+    {
+        var responsesById = responseSet.Responses
+            .Where(static response => !string.IsNullOrWhiteSpace(response.Id))
+            .ToDictionary(static response => response.Id!, StringComparer.OrdinalIgnoreCase);
+        var responsesByQuery = responseSet.Responses
+            .Where(static response => !string.IsNullOrWhiteSpace(response.Query))
+            .GroupBy(static response => response.Query!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var results = new List<EvalCaseResult>(dataset.Cases.Count);
+
+        foreach (var evalCase in dataset.Cases)
+        {
+            var id = EvalScorer.GetCaseId(evalCase);
+            if (!responsesById.TryGetValue(id, out var recorded)
+                && !responsesByQuery.TryGetValue(evalCase.Query, out recorded))
+            {
+                results.Add(EvalScorer.ScoreMissing(evalCase));
+                continue;
+            }
+
+            results.Add(EvalScorer.Score(evalCase, recorded.Response));
+        }
+
+        return BuildReport(dataset, results, failUnder);
+    }
+
+    private static EvalReport BuildReport(EvalDataset dataset, IReadOnlyList<EvalCaseResult> results, int? failUnder)
+    {
+        var averageScore = results.Count == 0 ? 0 : Math.Round(results.Average(static result => result.Score), 2);
+        var passed = failUnder is null || averageScore >= failUnder;
+        var successfulSources = results.Sum(static result => result.Metrics.FetchSuccessCount);
+        var sources = results.Sum(static result => result.Metrics.SourceCount);
+        var expectedDomainCaseCount = dataset.Cases.Count(static evalCase => evalCase.ExpectedDomains.Count > 0);
+        var requiredTermCaseCount = dataset.Cases.Count(static evalCase => evalCase.RequiredTerms.Count > 0);
+
+        return new EvalReport
+        {
+            Dataset = dataset.Name,
+            Description = dataset.Description,
+            GeneratedAt = DateTimeOffset.UtcNow,
+            CaseCount = results.Count,
+            AverageScore = averageScore,
+            FailUnder = failUnder,
+            Passed = passed,
+            Summary = new EvalSummaryMetrics
+            {
+                SuccessRate = Ratio(results.Count(static result => result.Success), results.Count),
+                ExpectedDomainHitRate = Ratio(results.Count(static result => result.Metrics.ExpectedDomainFound), expectedDomainCaseCount),
+                RequiredTermHitRate = Ratio(results.Count(static result => result.Metrics.RequiredTermConfigured && result.Metrics.RequiredTermsFound), requiredTermCaseCount),
+                BadDomainAvoidanceRate = Ratio(results.Count(static result => result.Metrics.BadDomainHitCount == 0), results.Count),
+                FetchSuccessRate = Ratio(successfulSources, sources),
+                AverageUniqueFetchedDomains = results.Count == 0 ? 0 : Math.Round(results.Average(static result => result.Metrics.UniqueFetchedDomainCount), 2)
+            },
+            Cases = results
+        };
+    }
+
+    private static double Ratio(int numerator, int denominator)
+        => denominator == 0 ? 0 : Math.Round((double)numerator / denominator, 3);
+}
+
+internal static class EvalScorer
+{
+    private static readonly string[] WeakTextMarkers =
+    [
+        "join linkedin",
+        "log into facebook",
+        "log in to facebook",
+        "sign in to continue",
+        "sign up to continue",
+        "create an account or sign in",
+        "please complete the following challenge",
+        "unfortunately, bots use duckduckgo too",
+        "our systems have detected unusual traffic"
+    ];
+
+    public static EvalCaseResult Score(EvalCase evalCase, ResearchResponse response)
+    {
+        var reasons = new List<string>();
+        var expectedDomainBestRank = GetExpectedDomainBestRank(evalCase.ExpectedDomains, response.SearchResults);
+        var expectedDomainFound = expectedDomainBestRank is not null;
+        var badDomainHits = response.SearchResults.Count(result => MatchesAnyDomain(result.Url, evalCase.BadDomains));
+        var haystack = BuildResearchHaystack(response);
+        var missingTerms = evalCase.RequiredTerms
+            .Where(term => !haystack.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var fetchSuccessCount = response.Sources.Count(static source => source.Fetch.Success);
+        var weakSourceCount = response.Sources.Count(static source => IsWeakSource(source.Fetch));
+        var uniqueFetchedDomainCount = response.Sources
+            .Select(static source => source.Fetch.Domain ?? TryGetDomain(source.Fetch.FinalUrl) ?? TryGetDomain(source.SearchResult.Url))
+            .Where(static domain => !string.IsNullOrWhiteSpace(domain))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        var score = 0;
+        if (response.Success)
+        {
+            score += 20;
+        }
+        else
+        {
+            reasons.Add("research did not return strong sources");
+        }
+
+        if (response.SearchResults.Count > 0)
+        {
+            score += 10;
+        }
+        else
+        {
+            reasons.Add("no search results");
+        }
+
+        if (evalCase.ExpectedDomains.Count == 0)
+        {
+            score += 20;
+        }
+        else if (expectedDomainBestRank <= 3)
+        {
+            score += 25;
+        }
+        else if (expectedDomainBestRank <= 10)
+        {
+            score += 18;
+        }
+        else
+        {
+            reasons.Add("expected domain not found in top results");
+        }
+
+        if (response.Sources.Count > 0)
+        {
+            score += 10;
+        }
+        else
+        {
+            reasons.Add("no fetched sources");
+        }
+
+        if (response.Sources.Count > 0)
+        {
+            score += (int)Math.Round(15.0 * fetchSuccessCount / response.Sources.Count);
+        }
+
+        if (response.Citations.Count > 0)
+        {
+            score += 10;
+        }
+        else
+        {
+            reasons.Add("no citations");
+        }
+
+        if (evalCase.RequiredTerms.Count == 0)
+        {
+            score += 10;
+        }
+        else if (missingTerms.Length == 0)
+        {
+            score += 10;
+        }
+        else
+        {
+            reasons.Add($"missing required terms: {string.Join(", ", missingTerms)}");
+        }
+
+        if (!string.IsNullOrWhiteSpace(response.Summary))
+        {
+            score += 10;
+        }
+        else
+        {
+            reasons.Add("no summary");
+        }
+
+        if (badDomainHits > 0)
+        {
+            var penalty = Math.Min(15, badDomainHits * 5);
+            score -= penalty;
+            reasons.Add($"bad domains appeared {badDomainHits} time(s)");
+        }
+
+        if (weakSourceCount > 0)
+        {
+            var penalty = Math.Min(10, weakSourceCount * 5);
+            score -= penalty;
+            reasons.Add($"weak sources fetched: {weakSourceCount}");
+        }
+
+        score = Math.Clamp(score, 0, 100);
+        if (reasons.Count == 0)
+        {
+            reasons.Add("all configured checks passed");
+        }
+
+        return new EvalCaseResult
+        {
+            Id = GetCaseId(evalCase),
+            Query = evalCase.Query,
+            Category = evalCase.Category,
+            Provider = response.Provider,
+            Profile = response.Profile,
+            Success = response.Success,
+            Score = score,
+            Reasons = reasons,
+            Metrics = new EvalCaseMetrics
+            {
+                SearchResultCount = response.SearchResults.Count,
+                SourceCount = response.Sources.Count,
+                CitationCount = response.Citations.Count,
+                FetchSuccessCount = fetchSuccessCount,
+                WeakSourceCount = weakSourceCount,
+                UniqueFetchedDomainCount = uniqueFetchedDomainCount,
+                ExpectedDomainFound = expectedDomainFound,
+                ExpectedDomainBestRank = expectedDomainBestRank,
+                RequiredTermsFound = missingTerms.Length == 0,
+                RequiredTermConfigured = evalCase.RequiredTerms.Count > 0,
+                MissingRequiredTerms = missingTerms,
+                BadDomainHitCount = badDomainHits
+            },
+            SearchResults = response.SearchResults.Select(static result => new EvalResultSnapshot
+            {
+                Rank = result.Rank,
+                Title = result.Title,
+                Url = result.Url,
+                Domain = result.Host ?? TryGetDomain(result.Url),
+                Snippet = result.Snippet
+            }).ToArray(),
+            Sources = response.Sources.Select(static source => new EvalSourceSnapshot
+            {
+                CitationId = source.CitationId,
+                Url = source.Fetch.FinalUrl,
+                Domain = source.Fetch.Domain ?? TryGetDomain(source.Fetch.FinalUrl),
+                FetchSuccess = source.Fetch.Success,
+                WordCount = source.Fetch.WordCount,
+                Weak = IsWeakSource(source.Fetch),
+                Excerpt = source.Fetch.Excerpt
+            }).ToArray(),
+            Summary = response.Summary
+        };
+    }
+
+    public static EvalCaseResult ScoreMissing(EvalCase evalCase)
+        => new()
+        {
+            Id = GetCaseId(evalCase),
+            Query = evalCase.Query,
+            Category = evalCase.Category,
+            Success = false,
+            Score = 0,
+            Reasons = ["no recorded response for this case"],
+            Metrics = new EvalCaseMetrics
+            {
+                MissingRequiredTerms = evalCase.RequiredTerms,
+                RequiredTermsFound = evalCase.RequiredTerms.Count == 0,
+                RequiredTermConfigured = evalCase.RequiredTerms.Count > 0
+            }
+        };
+
+    public static string GetCaseId(EvalCase evalCase)
+        => string.IsNullOrWhiteSpace(evalCase.Id) ? evalCase.Query : evalCase.Id;
+
+    private static int? GetExpectedDomainBestRank(IReadOnlyList<string> expectedDomains, IReadOnlyList<SearchResult> results)
+    {
+        if (expectedDomains.Count == 0)
+        {
+            return null;
+        }
+
+        return results
+            .Where(result => MatchesAnyDomain(result.Url, expectedDomains))
+            .Select(static result => result.Rank)
+            .DefaultIfEmpty()
+            .Where(static rank => rank > 0)
+            .Cast<int?>()
+            .Min();
+    }
+
+    private static bool MatchesAnyDomain(string? url, IReadOnlyList<string> domains)
+    {
+        if (domains.Count == 0)
+        {
+            return false;
+        }
+
+        var host = TryGetDomain(url);
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            return false;
+        }
+
+        return domains.Any(domain => DomainMatches(host, domain));
+    }
+
+    private static bool DomainMatches(string host, string expectedDomain)
+    {
+        var normalizedHost = NormalizeDomain(host);
+        var normalizedExpected = NormalizeDomain(expectedDomain);
+        return string.Equals(normalizedHost, normalizedExpected, StringComparison.OrdinalIgnoreCase)
+            || normalizedHost.EndsWith($".{normalizedExpected}", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeDomain(string domain)
+    {
+        var value = domain.Trim();
+        if (Uri.TryCreate(value, UriKind.Absolute, out var uri))
+        {
+            value = uri.Host;
+        }
+
+        return value.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? value[4..] : value;
+    }
+
+    private static string BuildResearchHaystack(ResearchResponse response)
+        => string.Join(' ', response.SearchResults.Select(result => $"{result.Title} {result.Snippet} {result.Url}")
+            .Concat(response.Sources.Select(source => $"{source.Fetch.Title} {source.Fetch.Excerpt} {source.Fetch.Text}"))
+            .Concat(response.Citations.Select(citation => $"{citation.Title} {citation.Quote} {citation.Url}"))
+            .Append(response.Summary ?? string.Empty));
+
+    private static bool IsWeakSource(FetchResponse fetch)
+    {
+        if (!fetch.Success || fetch.WordCount < 15)
+        {
+            return true;
+        }
+
+        var text = fetch.Text ?? fetch.Excerpt ?? string.Empty;
+        return WeakTextMarkers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? TryGetDomain(string? url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.Host : null;
+}
+
+internal static class EvalReportFormatter
+{
+    public static string FormatText(EvalReport report)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"Dataset: {report.Dataset ?? "(unnamed)"}");
+        builder.AppendLine($"Cases: {report.CaseCount}");
+        builder.AppendLine($"Average score: {report.AverageScore:0.##}");
+        if (report.FailUnder is not null)
+        {
+            builder.AppendLine($"Pass: {report.Passed}");
+        }
+
+        foreach (var result in report.Cases)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"[{result.Score}/100] {result.Id}: {result.Query}");
+            builder.AppendLine($"Provider: {result.Provider ?? "(none)"}");
+            builder.AppendLine($"Results: {result.Metrics.SearchResultCount}, sources: {result.Metrics.SourceCount}, citations: {result.Metrics.CitationCount}");
+            builder.AppendLine($"Reasons: {string.Join("; ", result.Reasons)}");
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    public static string FormatMarkdown(EvalReport report)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine($"# Recall Evaluation: {EscapeMarkdown(report.Dataset ?? "Unnamed Dataset")}");
+        builder.AppendLine();
+        if (!string.IsNullOrWhiteSpace(report.Description))
+        {
+            builder.AppendLine(report.Description);
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("## Summary");
+        builder.AppendLine();
+        builder.AppendLine($"- Generated: `{report.GeneratedAt:O}`");
+        builder.AppendLine($"- Cases: `{report.CaseCount}`");
+        builder.AppendLine($"- Average score: `{report.AverageScore:0.##}`");
+        if (report.FailUnder is not null)
+        {
+            builder.AppendLine($"- Fail under: `{report.FailUnder}`");
+            builder.AppendLine($"- Passed: `{report.Passed}`");
+        }
+
+        builder.AppendLine($"- Success rate: `{FormatPercent(report.Summary.SuccessRate)}`");
+        builder.AppendLine($"- Expected domain hit rate: `{FormatPercent(report.Summary.ExpectedDomainHitRate)}`");
+        builder.AppendLine($"- Required term hit rate: `{FormatPercent(report.Summary.RequiredTermHitRate)}`");
+        builder.AppendLine($"- Bad domain avoidance rate: `{FormatPercent(report.Summary.BadDomainAvoidanceRate)}`");
+        builder.AppendLine($"- Fetch success rate: `{FormatPercent(report.Summary.FetchSuccessRate)}`");
+        builder.AppendLine($"- Avg unique fetched domains: `{report.Summary.AverageUniqueFetchedDomains:0.##}`");
+        builder.AppendLine();
+        builder.AppendLine("## Cases");
+
+        foreach (var result in report.Cases)
+        {
+            builder.AppendLine();
+            builder.AppendLine($"### {EscapeMarkdown(result.Id)}: {EscapeMarkdown(result.Query)}");
+            builder.AppendLine();
+            builder.AppendLine($"- Score: `{result.Score}/100`");
+            builder.AppendLine($"- Provider: `{result.Provider ?? "(none)"}`");
+            builder.AppendLine($"- Profile: `{result.Profile ?? "(none)"}`");
+            if (!string.IsNullOrWhiteSpace(result.Category))
+            {
+                builder.AppendLine($"- Category: `{result.Category}`");
+            }
+
+            builder.AppendLine($"- Search results: `{result.Metrics.SearchResultCount}`");
+            builder.AppendLine($"- Sources: `{result.Metrics.SourceCount}`");
+            builder.AppendLine($"- Citations: `{result.Metrics.CitationCount}`");
+            builder.AppendLine($"- Fetch successes: `{result.Metrics.FetchSuccessCount}`");
+            builder.AppendLine($"- Unique fetched domains: `{result.Metrics.UniqueFetchedDomainCount}`");
+            builder.AppendLine($"- Expected domain best rank: `{(result.Metrics.ExpectedDomainBestRank?.ToString() ?? "not found")}`");
+            builder.AppendLine($"- Reasons: {string.Join("; ", result.Reasons.Select(EscapeMarkdown))}");
+
+            if (!string.IsNullOrWhiteSpace(result.Summary))
+            {
+                builder.AppendLine();
+                builder.AppendLine("Summary:");
+                builder.AppendLine();
+                builder.AppendLine(result.Summary);
+            }
+
+            if (result.SearchResults.Count > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine("Top results:");
+                foreach (var searchResult in result.SearchResults.Take(5))
+                {
+                    builder.AppendLine($"- `{searchResult.Rank}` [{EscapeMarkdown(searchResult.Title)}]({searchResult.Url}) `{searchResult.Domain ?? ""}`");
+                }
+            }
+
+            if (result.Sources.Count > 0)
+            {
+                builder.AppendLine();
+                builder.AppendLine("Sources:");
+                foreach (var source in result.Sources)
+                {
+                    builder.AppendLine($"- `{source.CitationId}` `{source.Domain ?? ""}` success=`{source.FetchSuccess}` weak=`{source.Weak}` words=`{source.WordCount}`");
+                }
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private static string FormatPercent(double ratio)
+        => $"{ratio * 100:0.#}%";
+
+    private static string EscapeMarkdown(string value)
+        => value.Replace("|", "\\|", StringComparison.Ordinal);
+}
 
 [McpServerToolType]
 internal sealed class RecallMcpTools(

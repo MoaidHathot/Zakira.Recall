@@ -32,6 +32,11 @@ public sealed class BingSearchProvider(IBrowserSessionFactory browserSessionFact
             Timeout = profile.TimeoutSeconds * 1000
         });
 
+        if (await IsBlockedOrConsentPageAsync(page))
+        {
+            throw new InvalidOperationException("Bing search was blocked by a bot, consent, or sign-in challenge.");
+        }
+
         var itemsLocator = page.Locator("li.b_algo");
         try
         {
@@ -39,6 +44,11 @@ public sealed class BingSearchProvider(IBrowserSessionFactory browserSessionFact
         }
         catch (TimeoutException)
         {
+            if (await IsBlockedOrConsentPageAsync(page))
+            {
+                throw new InvalidOperationException("Bing search was blocked by a bot, consent, or sign-in challenge.");
+            }
+
             return [];
         }
 
@@ -194,6 +204,18 @@ public sealed class BingSearchProvider(IBrowserSessionFactory browserSessionFact
         }
 
         return null;
+    }
+
+    private static async Task<bool> IsBlockedOrConsentPageAsync(IPage page)
+    {
+        var bodyText = (await page.Locator("body").TextContentAsync() ?? string.Empty).ToLowerInvariant();
+        return bodyText.Contains("verify you are a human", StringComparison.Ordinal)
+            || bodyText.Contains("our systems have detected unusual traffic", StringComparison.Ordinal)
+            || bodyText.Contains("solve the puzzle", StringComparison.Ordinal)
+            || bodyText.Contains("unusual activity", StringComparison.Ordinal)
+            || bodyText.Contains("accept cookies", StringComparison.Ordinal)
+            || bodyText.Contains("privacy and cookies", StringComparison.Ordinal)
+            || bodyText.Contains("sign in to continue", StringComparison.Ordinal);
     }
 
     private static string? CanonicalizeUrl(string? url)

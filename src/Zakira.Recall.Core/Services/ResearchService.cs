@@ -26,7 +26,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             FallbackProviders = request.FallbackProviders
         }, cancellationToken);
 
-        var topResults = SelectResults(request.Query, searchResponse.Results, request.TopPagesToRead, request.EnforceDomainDiversity);
+        var candidateResults = SelectResults(request.Query, searchResponse.Results, GetCandidateFetchCount(request.TopPagesToRead, searchResponse.Results.Count), request.EnforceDomainDiversity);
         var errors = new List<OperationError>();
         if (searchResponse.Error is not null)
         {
@@ -35,7 +35,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
 
         var maxConcurrency = Math.Clamp(request.MaxConcurrentFetches ?? profile.MaxConcurrentFetches, 1, 16);
         using var gate = new SemaphoreSlim(maxConcurrency, maxConcurrency);
-        var fetchTasks = topResults.Select(async result =>
+        var fetchTasks = candidateResults.Select(async result =>
         {
             await gate.WaitAsync(cancellationToken);
             try
@@ -77,6 +77,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
         var fetches = await Task.WhenAll(fetchTasks);
         var selectedFetches = fetches
             .OrderByDescending(item => ScoreFetchedResult(item.Item1, item.Item2))
+            .ThenBy(item => item.Item1.Rank)
             .Take(Math.Clamp(request.TopPagesToRead, 1, Math.Max(1, fetches.Length)))
             .ToArray();
 
@@ -128,8 +129,24 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
         };
     }
 
+    private static int GetCandidateFetchCount(int topPagesToRead, int resultCount)
+    {
+        if (resultCount <= 0)
+        {
+            return 0;
+        }
+
+        var requested = Math.Clamp(topPagesToRead, 1, resultCount);
+        return Math.Clamp(requested * 3, requested, resultCount);
+    }
+
     private static SearchResult[] SelectResults(string query, IReadOnlyList<SearchResult> results, int topPagesToRead, bool enforceDomainDiversity)
     {
+        if (results.Count == 0 || topPagesToRead <= 0)
+        {
+            return [];
+        }
+
         var targetCount = Math.Clamp(topPagesToRead, 1, Math.Max(1, results.Count));
         var uniqueResults = DedupeResults(results)
             .OrderByDescending(result => ScoreSearchResult(query, result))
@@ -176,7 +193,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
 
     private static int ScoreSearchResult(string query, SearchResult result)
     {
-        var score = 0;
+        var score = Math.Max(0, 100 - Math.Max(0, result.Rank - 1) * 8);
         var domain = TryGetDomain(result.Url) ?? string.Empty;
         var title = result.Title ?? string.Empty;
         var snippet = result.Snippet ?? string.Empty;
@@ -186,7 +203,7 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
         {
             if (haystack.Contains(token, StringComparison.Ordinal))
             {
-                score += 6;
+                score += 3;
             }
         }
 
@@ -196,13 +213,15 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
             || domain.Contains("x.com", StringComparison.OrdinalIgnoreCase)
             || domain.Contains("twitter.com", StringComparison.OrdinalIgnoreCase))
         {
-            score -= 8;
+            score -= 25;
         }
 
         if (LooksLikePersonalSite(query, domain, title, snippet))
         {
-            score += 14;
+            score += 12;
         }
+
+        score += Math.Clamp(result.QualityScore / 100, 0, 5);
 
         return score;
     }
@@ -263,9 +282,13 @@ public sealed class ResearchService(ISearchService searchService, IFetchService 
 
         return text.Contains("join linkedin", StringComparison.OrdinalIgnoreCase)
             || text.Contains("log into facebook", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("sign up", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("log in to facebook", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("sign in to continue", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("sign up to continue", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("create an account or sign in", StringComparison.OrdinalIgnoreCase)
             || text.Contains("please complete the following challenge", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("unfortunately, bots use duckduckgo too", StringComparison.OrdinalIgnoreCase);
+            || text.Contains("unfortunately, bots use duckduckgo too", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("our systems have detected unusual traffic", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string? BuildSummary(string query, IReadOnlyList<ResearchSource> sources)

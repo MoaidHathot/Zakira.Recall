@@ -103,8 +103,28 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
             }.Where(static value => !string.IsNullOrWhiteSpace(value)))) ?? string.Empty;
         }
 
-        var excerpt = normalizedText.Length <= 400 ? normalizedText : normalizedText[..400];
         var finalUrl = page.Url;
+        var wordCount = normalizedText.Length == 0 ? 0 : normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        var qualityError = CreateQualityError(normalizedText, wordCount, finalUrl);
+        if (qualityError is not null)
+        {
+            return new FetchResponse
+            {
+                Url = request.Url,
+                FinalUrl = finalUrl,
+                Success = false,
+                Title = HtmlText.Normalize(snapshot.Title),
+                Text = normalizedText,
+                Excerpt = normalizedText.Length <= 400 ? normalizedText : normalizedText[..400],
+                Domain = Uri.TryCreate(finalUrl, UriKind.Absolute, out var qualityUri) ? qualityUri.Host : null,
+                SiteName = HtmlText.Normalize(snapshot.SiteName),
+                PublishedAt = DateTimeOffset.TryParse(snapshot.PublishedAt, out var qualityPublishedAt) ? qualityPublishedAt : null,
+                WordCount = wordCount,
+                Error = qualityError
+            };
+        }
+
+        var excerpt = normalizedText.Length <= 400 ? normalizedText : normalizedText[..400];
         return new FetchResponse
         {
             Url = request.Url,
@@ -116,12 +136,63 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
             Domain = Uri.TryCreate(finalUrl, UriKind.Absolute, out var uri) ? uri.Host : null,
             SiteName = HtmlText.Normalize(snapshot.SiteName),
             PublishedAt = DateTimeOffset.TryParse(snapshot.PublishedAt, out var publishedAt) ? publishedAt : null,
-            WordCount = normalizedText.Length == 0 ? 0 : normalizedText.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length
+            WordCount = wordCount
         };
     }
 
     internal static int GetPostLoadWaitTimeoutMs(int timeoutMs)
         => Math.Clamp(timeoutMs, 250, 5000);
+
+    internal static OperationError? CreateQualityError(string text, int wordCount, string target)
+    {
+        if (ContainsAny(text,
+            "unfortunately, bots use duckduckgo too",
+            "please complete the following challenge",
+            "our systems have detected unusual traffic",
+            "verify you are a human"))
+        {
+            return new OperationError
+            {
+                Code = "fetch_bot_challenge",
+                Message = "Fetched page appears to be a bot challenge.",
+                Target = target,
+                Transient = true
+            };
+        }
+
+        if (ContainsAny(text,
+            "join linkedin",
+            "log into facebook",
+            "log in to facebook",
+            "sign in to continue",
+            "sign up to continue",
+            "create an account or sign in"))
+        {
+            return new OperationError
+            {
+                Code = "fetch_login_required",
+                Message = "Fetched page appears to require login or account creation.",
+                Target = target,
+                Transient = false
+            };
+        }
+
+        if (wordCount < 15)
+        {
+            return new OperationError
+            {
+                Code = "fetch_weak_content",
+                Message = "Fetched page did not contain enough readable content.",
+                Target = target,
+                Transient = false
+            };
+        }
+
+        return null;
+    }
+
+    private static bool ContainsAny(string text, params string[] markers)
+        => markers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
 
     private sealed class PageSnapshot
     {

@@ -132,9 +132,10 @@ public sealed class SearchService(
 
         foreach (var provider in requestFallbacks)
         {
-            if (!candidates.Contains(provider, StringComparer.OrdinalIgnoreCase))
+            var normalizedProvider = providerRegistry.NormalizeProviderName(provider);
+            if (normalizedProvider is not null && !candidates.Contains(normalizedProvider, StringComparer.OrdinalIgnoreCase))
             {
-                candidates.Add(provider);
+                candidates.Add(normalizedProvider);
             }
         }
 

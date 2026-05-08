@@ -83,17 +83,22 @@ public sealed class ProfileBootstrapper(
             return profile;
         }
 
-        return await EnsureProfileAsync(
-            profile.Name,
-            profile.Channel,
-            providerOverride ?? profile.DefaultProvider,
-            headless: false,
-            userDataDir: profile.UserDataDir,
-            fallbackProviders: profile.FallbackProviders,
-            enableFallback: profile.EnableProviderFallback,
-            providerHealthCooldownSeconds: profile.ProviderHealthCooldownSeconds,
-            maxConcurrentFetches: profile.MaxConcurrentFetches,
-            logLevel: profile.LogLevel,
-            cancellationToken: cancellationToken);
+        return new ProfileDescriptor
+        {
+            Name = profile.Name,
+            DefaultProvider = providerOverride is null
+                ? profile.DefaultProvider
+                : providerRegistry.NormalizeProviderName(providerOverride) ?? profile.DefaultProvider,
+            Channel = profile.Channel,
+            Headless = false,
+            Locale = profile.Locale,
+            TimeoutSeconds = profile.TimeoutSeconds,
+            UserDataDir = profile.UserDataDir,
+            FallbackProviders = profile.FallbackProviders,
+            EnableProviderFallback = profile.EnableProviderFallback,
+            ProviderHealthCooldownSeconds = profile.ProviderHealthCooldownSeconds,
+            MaxConcurrentFetches = profile.MaxConcurrentFetches,
+            LogLevel = profile.LogLevel
+        };
     }
 }

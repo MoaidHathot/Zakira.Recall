@@ -36,7 +36,6 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             ColorScheme = ColorScheme.Light,
             DeviceScaleFactor = 1,
             ViewportSize = new ViewportSize { Width = 1440, Height = 960 },
-            UserAgent = BuildUserAgent(profile),
             Args =
             [
                 "--disable-blink-features=AutomationControlled",
@@ -108,22 +107,6 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             }
             """);
         await Task.CompletedTask.WaitAsync(cancellationToken);
-    }
-
-    private static string BuildUserAgent(ProfileDescriptor profile)
-    {
-        var chromeVersion = profile.Channel switch
-        {
-            "msedge" => "136.0.0.0",
-            "chrome" => "136.0.0.0",
-            _ => "136.0.0.0"
-        };
-
-        return profile.Channel switch
-        {
-            "msedge" => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chromeVersion} Safari/537.36 Edg/{chromeVersion}",
-            _ => $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{chromeVersion} Safari/537.36"
-        };
     }
 
     private static void CopyDirectory(string sourceDir, string destinationDir)

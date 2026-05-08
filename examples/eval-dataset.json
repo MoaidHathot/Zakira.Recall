@@ -1,0 +1,55 @@
+{
+  "name": "starter-quality-suite",
+  "description": "Small representative suite for checking search, fetch, and research quality. Keep it stable and expand with real failure cases.",
+  "cases": [
+    {
+      "id": "official-dotnet-docs",
+      "query": "official .NET configuration options pattern documentation",
+      "category": "official-docs",
+      "expectedDomains": [
+        "learn.microsoft.com"
+      ],
+      "requiredTerms": [
+        "Options",
+        "configuration"
+      ],
+      "badDomains": [
+        "pinterest.com",
+        "facebook.com"
+      ]
+    },
+    {
+      "id": "playwright-dotnet-docs",
+      "query": "Playwright .NET browser context documentation",
+      "category": "official-docs",
+      "expectedDomains": [
+        "playwright.dev"
+      ],
+      "requiredTerms": [
+        "BrowserContext",
+        "Playwright"
+      ],
+      "badDomains": [
+        "facebook.com",
+        "linkedin.com"
+      ]
+    },
+    {
+      "id": "github-repo-lookup",
+      "query": "Zakira Recall GitHub MoaidHathot",
+      "category": "repo-lookup",
+      "expectedDomains": [
+        "github.com"
+      ],
+      "requiredTerms": [
+        "Zakira",
+        "Recall"
+      ],
+      "badDomains": [
+        "facebook.com",
+        "instagram.com",
+        "x.com"
+      ]
+    }
+  ]
+}
