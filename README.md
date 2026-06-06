@@ -332,6 +332,51 @@ MCP tools return structured typed results that are easier for agents to consume 
 
 `WebSearch` and `WebResearch` support provider selection, paging, time range, safe search, and fallback controls.
 
+## Agent Skills
+
+Zakira.Recall ships an [Agent Skill](https://agentskills.io) so MCP-compatible coding agents (Claude Code, OpenCode, Cursor, GitHub Copilot, Gemini CLI, and others) can discover when and how to use it without you having to spell it out in every prompt.
+
+The skill lives in this repo at:
+
+- `skills/zakira-recall/`
+
+It is a single skill called `zakira-recall` with a small `SKILL.md` index that routes the agent to focused references for each task:
+
+- `references/search.md` — `WebSearch` / `recall search`
+- `references/research.md` — `WebResearch` / `recall research`
+- `references/fetch.md` — `WebFetch`, `WebBatchFetch`, `WebSearchThenFetch` / `recall fetch`
+- `references/setup.md` — install, Playwright, MCP registration
+- `references/troubleshooting.md` — consent pages, captchas, provider health, fallback
+- `references/mcp-tools.md` — complete MCP tool reference
+
+### Install the skill
+
+Most agents look for skills in well-known directories. Copy or symlink the `skills/zakira-recall/` folder into the location your agent uses:
+
+```powershell
+# OpenCode (global)
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.config\opencode\skills" -Force | Out-Null
+Copy-Item -Recurse -Force "skills\zakira-recall" "$env:USERPROFILE\.config\opencode\skills\zakira-recall"
+
+# Claude Code (global)
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.claude\skills" -Force | Out-Null
+Copy-Item -Recurse -Force "skills\zakira-recall" "$env:USERPROFILE\.claude\skills\zakira-recall"
+
+# Generic .agents convention (global)
+New-Item -ItemType Directory -Path "$env:USERPROFILE\.agents\skills" -Force | Out-Null
+Copy-Item -Recurse -Force "skills\zakira-recall" "$env:USERPROFILE\.agents\skills\zakira-recall"
+```
+
+On Linux or macOS:
+
+```bash
+mkdir -p ~/.config/opencode/skills && cp -r skills/zakira-recall ~/.config/opencode/skills/
+mkdir -p ~/.claude/skills        && cp -r skills/zakira-recall ~/.claude/skills/
+mkdir -p ~/.agents/skills        && cp -r skills/zakira-recall ~/.agents/skills/
+```
+
+You can also install it per-project by copying the folder into `.opencode/skills/`, `.claude/skills/`, or `.agents/skills/` inside the consuming project. See your agent's docs for the exact lookup paths. For the full list of skills-compatible products, see [agentskills.io/home](https://agentskills.io/home).
+
 ## Pack
 
 Pack the NuGet tool locally:
