@@ -6,7 +6,7 @@ compatibility: Requires the `recall` global tool (`dotnet tool install --global 
 metadata:
   project: Zakira.Recall
   homepage: https://github.com/MoaidHathot/Zakira.Recall
-  version: "0.4.0"
+  version: "0.5.0"
 ---
 
 # Zakira.Recall
