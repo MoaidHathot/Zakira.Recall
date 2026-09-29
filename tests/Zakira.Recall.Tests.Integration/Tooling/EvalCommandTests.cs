@@ -166,26 +166,7 @@ public sealed class EvalCommandTests
     }
 
     private static string GetToolDllPath()
-    {
-        var outputPath = GetToolOutputPath();
-        var toolDllPath = Path.Combine(outputPath, "Zakira.Recall.Tool.dll");
-        Assert.True(File.Exists(toolDllPath), $"Expected tool DLL '{toolDllPath}' to exist.");
-        return toolDllPath;
-    }
-
-    private static string GetToolOutputPath()
-    {
-        var binRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin");
-        var candidates = new[]
-        {
-            Path.Combine(binRoot, "Release", "net10.0"),
-            Path.Combine(binRoot, "Debug", "net10.0")
-        };
-
-        var outputPath = candidates.FirstOrDefault(Directory.Exists);
-        Assert.True(outputPath is not null, $"Expected tool output directory under '{binRoot}' to exist.");
-        return outputPath!;
-    }
+        => ToolOutputLocator.GetToolDllPath();
 
     private static string GetRepositoryRoot([CallerFilePath] string filePath = "")
         => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(filePath)!, "..", "..", ".."));

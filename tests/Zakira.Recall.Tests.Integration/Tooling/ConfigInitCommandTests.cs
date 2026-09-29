@@ -126,18 +126,7 @@ public sealed class ConfigInitCommandTests
     }
 
     private static string GetToolDllPath()
-    {
-        var binRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "bin");
-        var candidates = new[]
-        {
-            Path.Combine(binRoot, "Release", "net10.0", "Zakira.Recall.Tool.dll"),
-            Path.Combine(binRoot, "Debug", "net10.0", "Zakira.Recall.Tool.dll")
-        };
-
-        var toolDllPath = candidates.FirstOrDefault(File.Exists);
-        Assert.True(toolDllPath is not null, $"Expected tool DLL under '{binRoot}' to exist.");
-        return toolDllPath!;
-    }
+        => ToolOutputLocator.GetToolDllPath();
 
     private static string GetRepositoryRoot([CallerFilePath] string filePath = "")
         => Path.GetFullPath(Path.Combine(Path.GetDirectoryName(filePath)!, "..", "..", ".."));
