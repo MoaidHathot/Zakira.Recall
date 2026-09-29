@@ -219,6 +219,9 @@ recall fetch <url> \
   [--output <json|text|markdown|dump>]
 ```
 
+`--output markdown` prints the readable text and, when the page declares one, a "Structured data" section with the
+schema.org main entity as JSON (see [Fetch Output](#fetch-output)).
+
 Research options:
 
 ```powershell
@@ -341,6 +344,38 @@ By default, `research` also:
 
 This makes the tool safer for agent workflows because one failed fetch does not have to fail the whole research run.
 
+## Fetch Output
+
+`fetch` (and the `web_fetch` / `web_batch_fetch` MCP tools) renders the page in a real browser, serializes the
+rendered DOM and extracts readable content in-process. A `FetchResponse` contains:
+
+- `title`, `text`, `excerpt` (single line, 400 chars), `wordCount`, `domain`, `siteName`, `publishedAt`
+- `statusCode`: HTTP status of the main document
+- `contentSelector`: the element the text was taken from (`main.main`, `article#post-7`, `body`, ...), useful when
+  checking extraction quality
+- `mainImage`: `og:image`, `twitter:image` or the main entity's image, as an absolute URL
+- `structuredData`: schema.org JSON-LD declared by the page: the root entity `types`, and the most relevant content
+  entity (`Recipe`, `HowTo`, `NewsArticle`/`Article`, `Product`, `Event`, `FAQPage`, ...) as `mainEntity`, returned
+  inline with bulky members (reviews, comments, actions) removed. Recipes therefore arrive with `recipeIngredient`,
+  `recipeInstructions`, ISO 8601 durations, yield and nutrition without any HTML parsing on the caller's side.
+  Site chrome (`WebSite`, `WebPage`, `BreadcrumbList`) is never the main entity.
+- `error` with `code` and `transient` when the page is not usable:
+  - `fetch_http_error`: the server answered 4xx/5xx (transient for 408/425/429/5xx); the page text is still returned
+  - `fetch_bot_challenge`: a challenge or block page (Cloudflare, Akamai, PerimeterX, DuckDuckGo, ...); transient
+  - `fetch_login_required`: a login wall
+  - `fetch_weak_content`: fewer than 15 readable words
+  - `fetch_failed`: the browser could not load the page; `transient` is `true` for timeouts, closed pages and driver restarts
+
+How the text is chosen: every plausible container (`article`, `main`, `[role=main]`, SPA roots, common CMS wrappers) is
+scored by its boilerplate-free word count and link density; semantic containers get a small edge; if the best one holds
+less than 40% of the page's words (a related-post card, a comment, a header teaser) the whole body is used instead.
+Navigation, headers, footers, hidden elements, comment areas, tables of contents, breadcrumbs and share widgets are
+removed; an `<aside>` inside the article is kept unless it is almost entirely links. Text keeps its block structure:
+paragraphs, headings, `-` / `1.` bullets, `|`-separated table cells and preformatted blocks.
+
+`publishedAt` and `siteName` fall back to JSON-LD (`datePublished`, `publisher`) when meta tags are missing; dates such
+as `July 8, 2024 at 2:48pm` are understood.
+
 ## MCP
 
 Run the MCP server over stdio:
@@ -351,19 +386,26 @@ recall mcp
 
 The exposed tools are:
 
-- `WebSearch`
-- `WebFetch`
-- `WebResearch`
-- `WebListProviders`
-- `WebBatchFetch`
-- `WebSearchThenFetch`
-- `WebShowConfig`
-- `WebShowProfile`
-- `WebGetProviderHealth`
+- `web_search`
+- `web_fetch`
+- `web_research`
+- `web_list_providers`
+- `web_batch_fetch` (concurrency bounded by the profile's `maxConcurrentFetches`, overridable per call)
+- `web_search_then_fetch`
+- `web_show_config`
+- `web_show_profile`
+- `web_get_provider_health`
 
 MCP tools return structured typed results that are easier for agents to consume directly.
 
-`WebSearch` and `WebResearch` support provider selection, paging, time range, safe search, and fallback controls.
+`web_search` and `web_research` support provider selection, paging, time range, safe search, and fallback controls.
+
+### Browser lifecycle
+
+Fetches share one Playwright driver process per host. If that process dies (a crash, or an external "kill every
+`node.exe`" sweep), the next fetch starts a new driver and retries once instead of failing until the host restarts.
+Headless fetches run in a throw-away copy of the profile that excludes caches (about 2 MB instead of 30+ MB); the
+copy is deleted after the fetch, and copies older than an hour are swept at start-up.
 
 ## Agent Skills
 
