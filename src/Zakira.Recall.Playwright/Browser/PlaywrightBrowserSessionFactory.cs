@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Playwright;
 using Zakira.Recall.Abstractions.Models;
 
@@ -7,6 +8,15 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
 {
     private static readonly string InstallScriptPath = Path.Combine(AppContext.BaseDirectory, "playwright.ps1");
     private static readonly string HeadlessSessionsRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "browser-sessions");
+
+    /// <summary>Session directories older than this cannot belong to a live fetch and are swept at start-up.</summary>
+    internal static readonly TimeSpan StaleSessionAge = TimeSpan.FromHours(1);
+
+    /// <summary>How long disposal waits for background directory cleanup before letting the process exit.</summary>
+    internal static readonly TimeSpan CleanupDrainTimeout = TimeSpan.FromSeconds(5);
+
+    private readonly ConcurrentDictionary<string, bool> _sweptProfiles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<Task, byte> _pendingCleanups = new();
 
     /// <summary>
     /// The Playwright driver is a Node child process shared by every fetch in this process. If it dies (crash, or an
@@ -19,6 +29,7 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
 
     public async ValueTask<IBrowserContext> CreateContextAsync(ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
+        SweepStaleSessionsOnce(profile);
         var userDataDir = ResolveUserDataDir(profile);
         Directory.CreateDirectory(userDataDir);
         PrepareSessionUserDataDir(profile, userDataDir);
@@ -55,14 +66,35 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
         await HardenContextAsync(context, cancellationToken);
         if (profile.Headless)
         {
-            context.Close += (_, _) => SafeDeleteDirectory(userDataDir);
+            // Edge releases its files shortly after the context closes; retry in the background instead of leaking the directory.
+            context.Close += (_, _) => TrackCleanup(SessionDirectoryCleaner.DeleteWithRetryAsync(userDataDir));
         }
 
         return context;
     }
 
-    public ValueTask DisposeAsync()
-        => _driver.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await _driver.DisposeAsync();
+
+        // Short-lived hosts (the CLI) exit right after a fetch; give directory cleanup a bounded chance to finish.
+        var pending = _pendingCleanups.Keys.ToArray();
+        if (pending.Length > 0)
+        {
+            await Task.WhenAny(Task.WhenAll(pending), Task.Delay(CleanupDrainTimeout));
+        }
+    }
+
+    private void TrackCleanup(Task cleanup)
+    {
+        if (cleanup.IsCompleted)
+        {
+            return;
+        }
+
+        _pendingCleanups.TryAdd(cleanup, 0);
+        cleanup.ContinueWith(task => _pendingCleanups.TryRemove(task, out _), TaskScheduler.Default);
+    }
 
     private static async Task<IPlaywright> CreateDriverAsync(CancellationToken cancellationToken)
     {
@@ -105,7 +137,19 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             return;
         }
 
-        CopyDirectory(seedUserDataDir, sessionUserDataDir);
+        ProfileSeeding.Copy(seedUserDataDir, sessionUserDataDir);
+    }
+
+    /// <summary>Once per process and profile, remove session directories left behind by earlier runs.</summary>
+    private void SweepStaleSessionsOnce(ProfileDescriptor profile)
+    {
+        if (!profile.Headless || !_sweptProfiles.TryAdd(profile.Name, true))
+        {
+            return;
+        }
+
+        var root = Path.Combine(HeadlessSessionsRoot, profile.Name);
+        TrackCleanup(Task.Run(() => SessionDirectoryCleaner.SweepStale(root, StaleSessionAge)));
     }
 
     private static async Task HardenContextAsync(IBrowserContext context, CancellationToken cancellationToken)
@@ -129,39 +173,5 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             }
             """);
         await Task.CompletedTask.WaitAsync(cancellationToken);
-    }
-
-    private static void CopyDirectory(string sourceDir, string destinationDir)
-    {
-        foreach (var directory in Directory.GetDirectories(sourceDir, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceDir, directory);
-            Directory.CreateDirectory(Path.Combine(destinationDir, relativePath));
-        }
-
-        foreach (var file in Directory.GetFiles(sourceDir, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(sourceDir, file);
-            var destinationPath = Path.Combine(destinationDir, relativePath);
-            Directory.CreateDirectory(Path.GetDirectoryName(destinationPath)!);
-            File.Copy(file, destinationPath, overwrite: true);
-        }
-    }
-
-    private static void SafeDeleteDirectory(string path)
-    {
-        try
-        {
-            if (Directory.Exists(path))
-            {
-                Directory.Delete(path, recursive: true);
-            }
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
     }
 }
