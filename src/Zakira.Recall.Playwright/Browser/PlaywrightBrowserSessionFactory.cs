@@ -5,9 +5,17 @@ namespace Zakira.Recall.Playwright.Browser;
 
 public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IAsyncDisposable
 {
-    private IPlaywright? _playwright;
     private static readonly string InstallScriptPath = Path.Combine(AppContext.BaseDirectory, "playwright.ps1");
     private static readonly string HeadlessSessionsRoot = Path.Combine(Path.GetTempPath(), "Zakira.Recall", "browser-sessions");
+
+    /// <summary>
+    /// The Playwright driver is a Node child process shared by every fetch in this process. If it dies (crash, or an
+    /// external "kill node" sweep) its connection stays closed forever, so it is replaced instead of being cached blindly.
+    /// </summary>
+    private readonly DriverHandle<IPlaywright> _driver = new(CreateDriverAsync, static driver => driver.Dispose());
+
+    /// <summary>Number of driver processes started so far (diagnostics).</summary>
+    public int DriverCreationCount => _driver.CreationCount;
 
     public async ValueTask<IBrowserContext> CreateContextAsync(ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
@@ -15,18 +23,6 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
         Directory.CreateDirectory(userDataDir);
         PrepareSessionUserDataDir(profile, userDataDir);
 
-        try
-        {
-            _playwright ??= await Microsoft.Playwright.Playwright.CreateAsync();
-        }
-        catch (Exception ex) when (ex is PlaywrightException or FileNotFoundException or DirectoryNotFoundException)
-        {
-            throw new InvalidOperationException(
-                BuildMissingRuntimeMessage(),
-                ex);
-        }
-
-        var browserType = _playwright.Chromium;
         var options = new BrowserTypeLaunchPersistentContextOptions
         {
             Channel = profile.Channel == "chromium" ? null : profile.Channel,
@@ -43,7 +39,19 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             ]
         };
 
-        var context = await browserType.LaunchPersistentContextAsync(userDataDir, options);
+        IBrowserContext context;
+        try
+        {
+            context = await _driver.RunAsync(
+                playwright => playwright.Chromium.LaunchPersistentContextAsync(userDataDir, options),
+                PlaywrightErrors.IsDriverProcessExited,
+                cancellationToken);
+        }
+        catch (PlaywrightException ex) when (PlaywrightErrors.IsMissingBrowserExecutable(ex))
+        {
+            throw new InvalidOperationException(BuildMissingBrowserMessage(profile), ex);
+        }
+
         await HardenContextAsync(context, cancellationToken);
         if (profile.Headless)
         {
@@ -53,16 +61,30 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
         return context;
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+        => _driver.DisposeAsync();
+
+    private static async Task<IPlaywright> CreateDriverAsync(CancellationToken cancellationToken)
     {
-        _playwright?.Dispose();
-        await ValueTask.CompletedTask;
+        try
+        {
+            return await Microsoft.Playwright.Playwright.CreateAsync();
+        }
+        catch (Exception ex) when (ex is PlaywrightException or FileNotFoundException or DirectoryNotFoundException)
+        {
+            throw new InvalidOperationException(BuildMissingRuntimeMessage(), ex);
+        }
     }
 
     private static string BuildMissingRuntimeMessage()
         => File.Exists(InstallScriptPath)
             ? $"Playwright runtime is not installed. Run `pwsh \"{InstallScriptPath}\" install chromium` and retry."
             : "Playwright runtime is not installed. Rebuild the CLI so Playwright runtime files are copied next to the executable, then run `pwsh <output-dir>/playwright.ps1 install chromium` and retry.";
+
+    private static string BuildMissingBrowserMessage(ProfileDescriptor profile)
+        => profile.Channel == "chromium"
+            ? $"The Playwright Chromium browser is not installed. Run `pwsh \"{InstallScriptPath}\" install chromium` and retry."
+            : $"Browser channel '{profile.Channel}' is not installed on this machine. Install it, or set the profile channel to \"chromium\" and run `pwsh \"{InstallScriptPath}\" install chromium`.";
 
     private static string ResolveUserDataDir(ProfileDescriptor profile)
         => profile.Headless

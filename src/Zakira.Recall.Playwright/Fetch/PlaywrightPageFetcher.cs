@@ -12,6 +12,20 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
 
     public async ValueTask<FetchResponse> FetchAsync(FetchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await FetchOnceAsync(request, profile, cancellationToken);
+        }
+        catch (PlaywrightException ex) when (PlaywrightErrors.IsDriverProcessExited(ex))
+        {
+            // The shared driver process died mid-fetch. The session factory starts a new one on the next launch,
+            // so a single retry recovers instead of failing every fetch until the host restarts.
+            return await FetchOnceAsync(request, profile, cancellationToken);
+        }
+    }
+
+    private async Task<FetchResponse> FetchOnceAsync(FetchRequest request, ProfileDescriptor profile, CancellationToken cancellationToken)
+    {
         await using var context = await browserSessionFactory.CreateContextAsync(profile, cancellationToken);
         var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync();
         var timeoutMs = Math.Max(5, request.TimeoutSeconds > 0 ? request.TimeoutSeconds : profile.TimeoutSeconds) * 1000;

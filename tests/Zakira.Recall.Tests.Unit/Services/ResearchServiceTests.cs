@@ -243,6 +243,17 @@ public sealed class ResearchServiceTests
     {
         public List<string> RequestedUrls { get; } = [];
 
+        public async ValueTask<FetchResponse[]> FetchBatchAsync(IReadOnlyList<FetchRequest> requests, int? maxConcurrentFetches = null, CancellationToken cancellationToken = default)
+        {
+            var responses = new FetchResponse[requests.Count];
+            for (var index = 0; index < requests.Count; index++)
+            {
+                responses[index] = await FetchAsync(requests[index], cancellationToken);
+            }
+
+            return responses;
+        }
+
         public ValueTask<FetchResponse> FetchAsync(FetchRequest request, CancellationToken cancellationToken = default)
         {
             RequestedUrls.Add(request.Url);

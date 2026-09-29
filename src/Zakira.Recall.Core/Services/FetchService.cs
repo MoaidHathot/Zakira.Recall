@@ -6,6 +6,38 @@ namespace Zakira.Recall.Core.Services;
 
 public sealed class FetchService(IProfileResolver profileResolver, IPageFetcher pageFetcher, ILogger<FetchService> logger) : IFetchService
 {
+    internal const int MinConcurrentFetches = 1;
+    internal const int MaxConcurrentFetchesLimit = 16;
+
+    public async ValueTask<FetchResponse[]> FetchBatchAsync(IReadOnlyList<FetchRequest> requests, int? maxConcurrentFetches = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(requests);
+        if (requests.Count == 0)
+        {
+            return [];
+        }
+
+        // Every browser launch is a full Edge/Chromium process; an unbounded Task.WhenAll over N urls starts N of them at once.
+        var profile = await profileResolver.ResolveAsync(requests[0].Profile, providerOverride: null, cancellationToken);
+        var concurrency = Math.Clamp(maxConcurrentFetches ?? profile.MaxConcurrentFetches, MinConcurrentFetches, MaxConcurrentFetchesLimit);
+        using var gate = new SemaphoreSlim(concurrency, concurrency);
+
+        var tasks = requests.Select(async request =>
+        {
+            await gate.WaitAsync(cancellationToken);
+            try
+            {
+                return await FetchAsync(request, cancellationToken);
+            }
+            finally
+            {
+                gate.Release();
+            }
+        });
+
+        return await Task.WhenAll(tasks);
+    }
+
     public async ValueTask<FetchResponse> FetchAsync(FetchRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Url);

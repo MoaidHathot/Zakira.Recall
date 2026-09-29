@@ -1802,15 +1802,16 @@ internal sealed class RecallMcpTools(
     public async Task<FetchResponse[]> WebBatchFetch(
         [Description("The URLs to fetch.")] string[] urls,
         [Description("Optional named profile managed by Zakira.Recall.")] string? profile = null,
-        [Description("Navigation timeout in seconds.")] int timeoutSeconds = 30)
+        [Description("Navigation timeout in seconds.")] int timeoutSeconds = 30,
+        [Description("Maximum number of pages fetched concurrently; defaults to the profile's maxConcurrentFetches.")] int? maxConcurrentFetches = null)
     {
-        var tasks = urls.Select(url => fetchService.FetchAsync(new FetchRequest
+        var requests = urls.Select(url => new FetchRequest
         {
             Url = url,
             Profile = profile,
             TimeoutSeconds = timeoutSeconds
-        }).AsTask());
-        return await Task.WhenAll(tasks);
+        }).ToArray();
+        return await fetchService.FetchBatchAsync(requests, maxConcurrentFetches);
     }
 
     [McpServerTool, Description("Search the web, then fetch a selected subset of result URLs.")]
