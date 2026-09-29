@@ -8,6 +8,9 @@ public sealed class FetchResponse
 
     public bool Success { get; init; }
 
+    /// <summary>HTTP status of the main document response, when the navigation produced one.</summary>
+    public int? StatusCode { get; init; }
+
     public string? Title { get; init; }
 
     public string? Text { get; init; }

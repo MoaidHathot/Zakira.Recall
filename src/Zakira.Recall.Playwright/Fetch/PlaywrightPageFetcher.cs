@@ -29,11 +29,12 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
         await using var context = await browserSessionFactory.CreateContextAsync(profile, cancellationToken);
         var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync();
         var timeoutMs = Math.Max(5, request.TimeoutSeconds > 0 ? request.TimeoutSeconds : profile.TimeoutSeconds) * 1000;
-        await page.GotoAsync(request.Url, new PageGotoOptions
+        var response = await page.GotoAsync(request.Url, new PageGotoOptions
         {
             WaitUntil = WaitUntilState.DOMContentLoaded,
             Timeout = timeoutMs
         });
+        var statusCode = response?.Status;
 
         try
         {
@@ -51,15 +52,17 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
         var finalUrl = page.Url;
         var content = contentExtractor.Extract(html, finalUrl);
 
+        var title = HtmlText.Normalize(content.Title);
         var text = content.Text;
         var wordCount = content.WordCount;
-        var qualityError = CreateQualityError(text, wordCount, finalUrl);
+        var qualityError = CreateQualityError(title, text, wordCount, statusCode, finalUrl);
         return new FetchResponse
         {
             Url = request.Url,
             FinalUrl = finalUrl,
             Success = qualityError is null,
-            Title = HtmlText.Normalize(content.Title),
+            StatusCode = statusCode,
+            Title = title,
             Text = text,
             Excerpt = CreateExcerpt(text),
             Domain = Uri.TryCreate(finalUrl, UriKind.Absolute, out var uri) ? uri.Host : null,
@@ -88,54 +91,6 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
         return singleLine.Length <= ExcerptLength ? singleLine : singleLine[..ExcerptLength];
     }
 
-    internal static OperationError? CreateQualityError(string text, int wordCount, string target)
-    {
-        if (ContainsAny(text,
-            "unfortunately, bots use duckduckgo too",
-            "please complete the following challenge",
-            "our systems have detected unusual traffic",
-            "verify you are a human"))
-        {
-            return new OperationError
-            {
-                Code = "fetch_bot_challenge",
-                Message = "Fetched page appears to be a bot challenge.",
-                Target = target,
-                Transient = true
-            };
-        }
-
-        if (ContainsAny(text,
-            "join linkedin",
-            "log into facebook",
-            "log in to facebook",
-            "sign in to continue",
-            "sign up to continue",
-            "create an account or sign in"))
-        {
-            return new OperationError
-            {
-                Code = "fetch_login_required",
-                Message = "Fetched page appears to require login or account creation.",
-                Target = target,
-                Transient = false
-            };
-        }
-
-        if (wordCount < 15)
-        {
-            return new OperationError
-            {
-                Code = "fetch_weak_content",
-                Message = "Fetched page did not contain enough readable content.",
-                Target = target,
-                Transient = false
-            };
-        }
-
-        return null;
-    }
-
-    private static bool ContainsAny(string text, params string[] markers)
-        => markers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    internal static OperationError? CreateQualityError(string? title, string text, int wordCount, int? statusCode, string target)
+        => FetchQuality.Evaluate(title, text, wordCount, statusCode, target);
 }
