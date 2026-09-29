@@ -22,5 +22,11 @@ public sealed class FetchResponse
 
     public int WordCount { get; init; }
 
+    /// <summary>
+    /// A CSS-like description of the element the readable text was taken from (for example <c>main.main</c> or <c>body</c>).
+    /// Useful to diagnose extraction quality.
+    /// </summary>
+    public string? ContentSelector { get; init; }
+
     public OperationError? Error { get; init; }
 }

@@ -47,4 +47,18 @@ public sealed class PlaywrightPageFetcherTests
         Assert.Equal("fetch_weak_content", error!.Code);
         Assert.False(error.Transient);
     }
+
+    [Fact]
+    public void Excerpt_Is_A_Single_Line_Capped_At_400_Characters()
+    {
+        var text = "Headline\n\n" + string.Join('\n', Enumerable.Range(1, 200).Select(index => $"- item {index}"));
+
+        var excerpt = PlaywrightPageFetcher.CreateExcerpt(text);
+
+        Assert.NotNull(excerpt);
+        Assert.Equal(400, excerpt!.Length);
+        Assert.StartsWith("Headline - item 1 - item 2", excerpt);
+        Assert.DoesNotContain('\n', excerpt);
+        Assert.Null(PlaywrightPageFetcher.CreateExcerpt("  \n "));
+    }
 }

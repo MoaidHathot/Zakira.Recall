@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Zakira.Recall.Abstractions.Config;
 using Zakira.Recall.Abstractions.Services;
 using Zakira.Recall.Core.Configuration;
+using Zakira.Recall.Core.Extraction;
 using Zakira.Recall.Core.Infrastructure;
 using Zakira.Recall.Core.Profiles;
 using Zakira.Recall.Core.Providers;
@@ -23,6 +24,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProfileResolver, ProfileResolver>();
         services.AddSingleton<IProfileBootstrapper, ProfileBootstrapper>();
         services.AddSingleton<IProviderHealthTracker, ProviderHealthTracker>();
+        services.AddSingleton<IContentExtractor, ReadableContentExtractor>();
         services.AddSingleton<ISearchService, SearchService>();
         services.AddSingleton<IFetchService, FetchService>();
         services.AddSingleton<IResearchService, ResearchService>();

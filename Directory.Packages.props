@@ -4,6 +4,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageVersion Include="AngleSharp" Version="1.8.2" />
     <PackageVersion Include="CliWrap" Version="3.8.1" />
     <PackageVersion Include="Dumpify" Version="0.7.1-beta.1" />
     <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.0" />
