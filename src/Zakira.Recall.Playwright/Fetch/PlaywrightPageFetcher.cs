@@ -64,9 +64,11 @@ public sealed class PlaywrightPageFetcher(IBrowserSessionFactory browserSessionF
             Excerpt = CreateExcerpt(text),
             Domain = Uri.TryCreate(finalUrl, UriKind.Absolute, out var uri) ? uri.Host : null,
             SiteName = HtmlText.Normalize(content.SiteName),
-            PublishedAt = DateTimeOffset.TryParse(content.PublishedAt, out var publishedAt) ? publishedAt : null,
+            PublishedAt = content.PublishedAt,
             WordCount = wordCount,
             ContentSelector = content.ContentSelector,
+            MainImage = content.MainImage,
+            StructuredData = content.StructuredData,
             Error = qualityError
         };
     }

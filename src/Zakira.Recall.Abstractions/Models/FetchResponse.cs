@@ -28,5 +28,11 @@ public sealed class FetchResponse
     /// </summary>
     public string? ContentSelector { get; init; }
 
+    /// <summary>The page's representative image (og:image, twitter:image or the main entity's image), absolute URL.</summary>
+    public string? MainImage { get; init; }
+
+    /// <summary>schema.org JSON-LD declared by the page (main entity such as Recipe/Article/Product), if any.</summary>
+    public StructuredData? StructuredData { get; init; }
+
     public OperationError? Error { get; init; }
 }

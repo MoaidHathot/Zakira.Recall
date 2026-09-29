@@ -26,7 +26,7 @@ public sealed class ReadableContentExtractorFixtureTests
         Assert.Contains("\nIngredients\n", content.Text);
         Assert.Contains("1. Make the yudane", content.Text);
         Assert.Equal("ChainBaker", content.SiteName);
-        Assert.Equal("2022-02-02T16:00:00+00:00", content.PublishedAt);
+        Assert.Equal(DateTimeOffset.Parse("2022-02-02T16:00:00+00:00"), content.PublishedAt);
         Assert.Equal("How to Make Super Soft Burger Buns | Yudane Method", content.Headline);
         Assert.StartsWith(content.Headline!, content.Text);
         Assert.Equal(1, CountOccurrences(content.Text, content.Headline!));
@@ -50,7 +50,7 @@ public sealed class ReadableContentExtractorFixtureTests
         Assert.InRange(content.WordCount, 850, 1_200);
         Assert.Contains("60g (2.1oz) wholemeal rye flour", content.Text);
         Assert.Contains("400g (14.1oz) strong white bread flour", content.Text);
-        Assert.Equal("2021-08-04T15:00:00+00:00", content.PublishedAt);
+        Assert.Equal(DateTimeOffset.Parse("2021-08-04T15:00:00+00:00"), content.PublishedAt);
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public sealed class ReadableContentExtractorFixtureTests
         Assert.Contains("\n- 1 tablespoon light oil, such as canola or vegetable\n", content.Text);
         Assert.Contains("\n- ½ teaspoon smoked paprika\n", content.Text);
         Assert.DoesNotContain(")▢", content.Text);
-        Assert.Equal("2020-05-27T05:00:00+00:00", content.PublishedAt);
+        Assert.Equal(DateTimeOffset.Parse("2020-05-27T05:00:00+00:00"), content.PublishedAt);
     }
 
     [Fact]
@@ -142,6 +142,67 @@ public sealed class ReadableContentExtractorFixtureTests
         Assert.DoesNotContain("\t", content.Text);
         Assert.Equal(content.Text, content.Text.Trim());
         Assert.Equal(ReadableContentExtractor.CountWords(content.Text), content.WordCount);
+    }
+
+    [Fact]
+    public void KingArthur_Exposes_The_Recipe_Json_Ld_And_Backfills_Date_And_Image_From_It()
+    {
+        // No article:published_time meta; the Recipe declares datePublished as "July 8, 2024 at 2:48pm".
+        var content = Extract("kingarthurbaking-everyday-french-loaf.html", "https://www.kingarthurbaking.com/recipes/everyday-french-loaf-recipe");
+
+        var structured = content.StructuredData;
+        Assert.NotNull(structured);
+        Assert.Equal(["Recipe"], structured!.Types);
+        Assert.Equal("Recipe", structured.MainEntityType);
+        var recipe = structured.MainEntity!.Value;
+        Assert.Equal("Everyday French Loaf", recipe.GetProperty("name").GetString());
+        Assert.Equal(7, recipe.GetProperty("recipeIngredient").GetArrayLength());
+        Assert.Equal(17, recipe.GetProperty("recipeInstructions").GetArrayLength());
+        Assert.Equal("PT20M", recipe.GetProperty("prepTime").GetString());
+        Assert.Equal("PT20H0M", recipe.GetProperty("totalTime").GetString());
+        Assert.Equal(new DateTimeOffset(2024, 7, 8, 14, 48, 0, TimeSpan.Zero), content.PublishedAt);
+        Assert.Equal("https://www.kingarthurbaking.com/sites/default/files/2024-07/Everyday-French-Loaf_1366.jpg", content.MainImage);
+    }
+
+    [Fact]
+    public void NytCooking_Recipe_Json_Ld_Is_Returned_Without_Its_Review_Payload()
+    {
+        var content = Extract("nytcooking-parmesan-crusted-potatoes.html", "https://cooking.nytimes.com/recipes/1024575");
+
+        var structured = content.StructuredData!;
+        Assert.Equal("Recipe", structured.MainEntityType);
+        Assert.Contains("WebPage", structured.Types);
+        var recipe = structured.MainEntity!.Value;
+        Assert.Equal(10, recipe.GetProperty("recipeIngredient").GetArrayLength());
+        Assert.False(recipe.TryGetProperty("review", out _));
+        Assert.InRange(recipe.GetRawText().Length, 5_000, StructuredDataExtractor.MaxMainEntityJsonLength);
+        Assert.Equal(new DateTimeOffset(2019, 11, 20, 0, 0, 0, TimeSpan.Zero), content.PublishedAt);
+        Assert.StartsWith("https://static01.nyt.com/images/", content.MainImage);
+    }
+
+    [Fact]
+    public void ChainBaker_Declares_Only_An_Article_So_Text_Extraction_Is_The_Only_Source_Of_The_Recipe()
+    {
+        var content = Extract("chainbaker-yudane-buns.html", "https://www.chainbaker.com/yudane-buns/");
+
+        Assert.Equal("Article", content.StructuredData!.MainEntityType);
+        Assert.DoesNotContain("Recipe", content.StructuredData.Types);
+        Assert.Equal("https://www.chainbaker.com/wp-content/uploads/2022/01/IMG_2198.jpg", content.MainImage);
+    }
+
+    [Theory]
+    [InlineData("itdoesnttastelikechicken-bbq-shredded-tofu.html", 8, 5)]
+    [InlineData("sweetsimplevegan-sticky-sesame-tofu.html", 15, 7)]
+    [InlineData("twospoons-crispy-baked-tofu.html", 7, 2)]
+    public void WordPress_Recipe_Plugins_Yield_A_Recipe_Main_Entity(string fixture, int ingredients, int instructions)
+    {
+        var content = Extract(fixture, "https://example.test/");
+
+        var recipe = content.StructuredData!.MainEntity!.Value;
+        Assert.Equal("Recipe", content.StructuredData.MainEntityType);
+        Assert.Equal(ingredients, recipe.GetProperty("recipeIngredient").GetArrayLength());
+        Assert.Equal(instructions, recipe.GetProperty("recipeInstructions").GetArrayLength());
+        Assert.NotNull(content.MainImage);
     }
 
     private static int CountOccurrences(string text, string value)

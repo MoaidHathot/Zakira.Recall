@@ -36,9 +36,10 @@ public sealed class ReadableContentExtractor : IContentExtractor
         var document = Parser.ParseDocument(html);
         var noise = new NoiseFilter();
         var root = (IElement?)document.Body ?? document.DocumentElement;
+        var structured = new StructuredDataExtractor().Extract(document);
 
         var title = NormalizeInline(document.Title);
-        var headline = FindHeadline(document, noise);
+        var headline = FindHeadline(document, noise) ?? NormalizeInline(structured.Headline);
         var metaDescription = NormalizeInline(
             GetMeta(document, "meta[name='description']")
             ?? GetMeta(document, "meta[property='og:description']")
@@ -47,12 +48,20 @@ public sealed class ReadableContentExtractor : IContentExtractor
         var siteName = NormalizeInline(
             GetMeta(document, "meta[property='og:site_name']")
             ?? GetMeta(document, "meta[name='og:site_name']")
+            ?? structured.PublisherName
             ?? GetMeta(document, "meta[name='application-name']"))
             ?? GetHost(url);
-        var publishedAt = NormalizeInline(
+        var publishedAt = DateParsing.TryParse(
             GetMeta(document, "meta[property='article:published_time']")
             ?? GetMeta(document, "meta[name='article:published_time']")
+            ?? structured.DatePublished
             ?? document.QuerySelector("time[datetime]")?.GetAttribute("datetime"));
+        var mainImage = ResolveUrl(
+            GetMeta(document, "meta[property='og:image']")
+            ?? GetMeta(document, "meta[property='og:image:secure_url']")
+            ?? GetMeta(document, "meta[name='twitter:image']")
+            ?? structured.ImageUrl,
+            url);
 
         var body = root is null ? new TextStats(string.Empty, 0, 0) : TextBuilder.Build(root, noise, treatRootAsContent: true);
         var selection = root is null ? null : SelectMainContent(root, body, noise);
@@ -70,7 +79,9 @@ public sealed class ReadableContentExtractor : IContentExtractor
             Text = text,
             WordCount = CountWords(text),
             BodyWordCount = body.WordCount,
-            ContentSelector = contentSelector
+            ContentSelector = contentSelector,
+            MainImage = mainImage,
+            StructuredData = structured.ToModel()
         };
     }
 
@@ -215,6 +226,30 @@ public sealed class ReadableContentExtractor : IContentExtractor
 
     private static string? GetHost(string? url)
         => Uri.TryCreate(url, UriKind.Absolute, out var uri) && !string.IsNullOrEmpty(uri.Host) ? uri.Host : null;
+
+    /// <summary>Returns an absolute http(s) URL, resolving relative references against the page URL; null otherwise.</summary>
+    internal static string? ResolveUrl(string? value, string? baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var trimmed = value.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
+        {
+            return IsHttp(absolute) ? absolute.ToString() : null;
+        }
+
+        if (Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri) && Uri.TryCreate(baseUri, trimmed, out var resolved) && IsHttp(resolved))
+        {
+            return resolved.ToString();
+        }
+
+        return null;
+
+        static bool IsHttp(Uri uri) => uri.Scheme is "http" or "https";
+    }
 
     internal static string Describe(IElement element)
     {

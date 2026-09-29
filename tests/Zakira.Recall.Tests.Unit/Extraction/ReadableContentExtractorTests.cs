@@ -220,7 +220,7 @@ public sealed class ReadableContentExtractorTests
         Assert.Equal("Second-level headline", content.Headline);
         Assert.Equal("Open graph description", content.MetaDescription);
         Assert.Equal("Example Site", content.SiteName);
-        Assert.Equal("2024-05-01T10:00:00+02:00", content.PublishedAt);
+        Assert.Equal(DateTimeOffset.Parse("2024-05-01T10:00:00+02:00"), content.PublishedAt);
         Assert.StartsWith("Second-level headline\n\nOpen graph description\n\nword1", content.Text);
     }
 
@@ -236,7 +236,7 @@ public sealed class ReadableContentExtractorTests
         var content = Extractor.Extract(html, "https://blog.example.org/x");
 
         Assert.Equal("blog.example.org", content.SiteName);
-        Assert.Equal("2023-01-02", content.PublishedAt);
+        Assert.Equal(new DateTimeOffset(2023, 1, 2, 0, 0, 0, TimeSpan.Zero), content.PublishedAt);
         Assert.Null(content.MetaDescription);
     }
 

@@ -881,7 +881,7 @@ internal static class ZakiraRecallProgram
         => value switch
         {
             SearchResponse response => string.Join(Environment.NewLine, response.Results.Select(result => $"- [{result.Title}]({result.Url}){(string.IsNullOrWhiteSpace(result.Snippet) ? string.Empty : $" - {result.Snippet}")}")),
-            FetchResponse response when response.Success => $"# {response.Title ?? response.FinalUrl}{Environment.NewLine}{Environment.NewLine}{response.Text}",
+            FetchResponse response when response.Success => FormatFetchMarkdown(response),
             FetchResponse response => $"# Fetch Failed{Environment.NewLine}{Environment.NewLine}{response.Error?.Message}",
             ResearchResponse response => FormatResearchMarkdown(response),
             EvalReport report => EvalReportFormatter.FormatMarkdown(report),
@@ -892,6 +892,26 @@ internal static class ZakiraRecallProgram
             ProviderHealthSnapshot snapshot => $"# Provider Health `{snapshot.Provider}`{Environment.NewLine}{Environment.NewLine}- Healthy: `{snapshot.IsHealthy}`{Environment.NewLine}- Consecutive failures: `{snapshot.ConsecutiveFailures}`",
             _ => FormatText(value)
         };
+
+    private static string FormatFetchMarkdown(FetchResponse response)
+    {
+        var builder = new StringBuilder();
+        builder.Append("# ").AppendLine(response.Title ?? response.FinalUrl);
+        builder.AppendLine();
+        builder.Append(response.Text);
+        if (response.StructuredData is { MainEntity: not null } structured)
+        {
+            builder.AppendLine();
+            builder.AppendLine();
+            builder.Append("## Structured data (schema.org ").Append(structured.MainEntityType).AppendLine(")");
+            builder.AppendLine();
+            builder.AppendLine("```json");
+            builder.AppendLine(JsonSerializer.Serialize(structured.MainEntity.Value, JsonSupport.Options));
+            builder.Append("```");
+        }
+
+        return builder.ToString();
+    }
 
     private static string FormatProviderText(SearchProviderDescriptor provider)
     {

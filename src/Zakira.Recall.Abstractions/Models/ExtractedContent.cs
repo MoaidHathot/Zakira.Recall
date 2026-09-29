@@ -17,8 +17,8 @@ public sealed class ExtractedContent
     /// <summary>The site name (og:site_name, application-name or the host name).</summary>
     public string? SiteName { get; init; }
 
-    /// <summary>The raw publication timestamp as declared by the page, if any.</summary>
-    public string? PublishedAt { get; init; }
+    /// <summary>The publication timestamp as declared by the page (meta tags, JSON-LD or a &lt;time&gt; element), if parseable.</summary>
+    public DateTimeOffset? PublishedAt { get; init; }
 
     /// <summary>
     /// The readable text: headline, description and main content, with block elements separated by line breaks.
@@ -35,4 +35,10 @@ public sealed class ExtractedContent
     /// A CSS-like description of the element chosen as main content (for example <c>main.main</c>, <c>article#post-1</c> or <c>body</c>).
     /// </summary>
     public string? ContentSelector { get; init; }
+
+    /// <summary>The page's representative image (og:image, twitter:image or the main entity's image), absolute URL.</summary>
+    public string? MainImage { get; init; }
+
+    /// <summary>schema.org JSON-LD declared by the page, if any.</summary>
+    public StructuredData? StructuredData { get; init; }
 }
