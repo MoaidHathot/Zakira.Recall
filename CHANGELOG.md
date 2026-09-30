@@ -4,6 +4,14 @@ All notable changes to Zakira.Recall are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/)
 while the project is pre-1.0 (minor bumps may change behaviour).
 
+## [Unreleased]
+
+### Fixed
+
+- Session directories of fetches that were in flight when the Playwright driver died are now removed as soon as the
+  driver loss is detected (and on host shutdown) instead of lingering until the one-hour stale sweep. Cleanup also
+  deletes once more after the browser reports disconnection, catching the last file Edge writes while shutting down.
+
 ## [0.6.1] - 2026-10-01
 
 ### Fixed
@@ -133,6 +141,7 @@ under 0.6.0.)
   and health tracking, the `recall mcp` stdio server, `recall config init`, `pack.ps1` and CI workflows for Windows,
   Linux and macOS.
 
+[Unreleased]: https://github.com/MoaidHathot/Zakira.Recall/compare/v0.6.1...HEAD
 [0.6.1]: https://github.com/MoaidHathot/Zakira.Recall/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/MoaidHathot/Zakira.Recall/compare/a1427ec...v0.6.0
 [0.5.0]: https://github.com/MoaidHathot/Zakira.Recall/compare/4ec7664...a1427ec

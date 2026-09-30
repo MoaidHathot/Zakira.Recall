@@ -15,6 +15,9 @@ internal sealed class DriverHandle<TDriver>(Func<CancellationToken, Task<TDriver
     /// <summary>Number of driver instances created so far (diagnostics).</summary>
     public int CreationCount => Volatile.Read(ref _creationCount);
 
+    /// <summary>Raised after a dead driver has been dropped; everything it owned (browsers, sessions) is gone with it.</summary>
+    public event Action? DriverLost;
+
     public async Task<TDriver> GetAsync(CancellationToken cancellationToken = default)
     {
         var current = Volatile.Read(ref _driver);
@@ -43,6 +46,7 @@ internal sealed class DriverHandle<TDriver>(Func<CancellationToken, Task<TDriver
     /// <summary>Drops <paramref name="dead"/> if it is still the current instance; a newer replacement is left alone.</summary>
     public async Task ResetAsync(TDriver dead, CancellationToken cancellationToken = default)
     {
+        var dropped = false;
         await _gate.WaitAsync(cancellationToken);
         try
         {
@@ -50,11 +54,17 @@ internal sealed class DriverHandle<TDriver>(Func<CancellationToken, Task<TDriver
             {
                 _driver = null;
                 SafeDispose(dead);
+                dropped = true;
             }
         }
         finally
         {
             _gate.Release();
+        }
+
+        if (dropped)
+        {
+            DriverLost?.Invoke();
         }
     }
 

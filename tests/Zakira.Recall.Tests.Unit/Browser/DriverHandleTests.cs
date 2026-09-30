@@ -104,6 +104,32 @@ public sealed class DriverHandleTests
     }
 
     [Fact]
+    public async Task Raises_DriverLost_Once_Per_Dropped_Driver_And_Not_For_Stale_Or_Unrelated_Failures()
+    {
+        var handle = new DriverHandle<FakeDriver>(static _ => Task.FromResult(new FakeDriver()), static driver => driver.Disposed = true);
+        var lost = 0;
+        handle.DriverLost += () => lost++;
+        var first = await handle.GetAsync();
+
+        await handle.ResetAsync(first);      // dropped
+        await handle.ResetAsync(first);      // stale reference: nothing to drop
+        Assert.Equal(1, lost);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => handle.RunAsync<string>(
+            static _ => throw new InvalidOperationException("page closed"),
+            static ex => ex is DeadDriverException));
+        Assert.Equal(1, lost);
+
+        await Assert.ThrowsAsync<DeadDriverException>(() => handle.RunAsync<string>(
+            static _ => throw new DeadDriverException(),
+            static ex => ex is DeadDriverException));
+        Assert.Equal(2, lost); // the retry's driver is dropped once, then the operation gives up
+
+        await handle.DisposeAsync();
+        Assert.Equal(2, lost); // disposal is not a loss
+    }
+
+    [Fact]
     public async Task Dispose_Releases_The_Driver_And_Swallows_Disposal_Errors()
     {
         var handle = new DriverHandle<FakeDriver>(static _ => Task.FromResult(new FakeDriver()), static _ => throw new ObjectDisposedException("already closed"));

@@ -22,6 +22,13 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     private readonly ConcurrentDictionary<Task, byte> _pendingCleanups = new();
 
     /// <summary>
+    /// Headless session directories created by this factory that have not been deleted yet. When the driver dies,
+    /// every browser it launched dies with it without the contexts ever reporting Close, so these are the directories
+    /// that would otherwise linger until the stale sweep an hour later.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _openSessions = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Per browser channel: the user agent to present (null when the browser's own string needs no change).
     /// Learned from the first headless launch, see <see cref="BrowserIdentity"/>.
     /// </summary>
@@ -31,10 +38,19 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     /// The Playwright driver is a Node child process shared by every fetch in this process. If it dies (crash, or an
     /// external "kill node" sweep) its connection stays closed forever, so it is replaced instead of being cached blindly.
     /// </summary>
-    private readonly DriverHandle<IPlaywright> _driver = new(CreateDriverAsync, static driver => driver.Dispose());
+    private readonly DriverHandle<IPlaywright> _driver;
+
+    public PlaywrightBrowserSessionFactory()
+    {
+        _driver = new DriverHandle<IPlaywright>(CreateDriverAsync, static driver => driver.Dispose());
+        _driver.DriverLost += CleanUpOpenSessions;
+    }
 
     /// <summary>Number of driver processes started so far (diagnostics).</summary>
     public int DriverCreationCount => _driver.CreationCount;
+
+    /// <summary>Number of headless session directories created by this factory that still exist (diagnostics).</summary>
+    public int OpenSessionCount => _openSessions.Count;
 
     public async ValueTask<IBrowserContext> CreateContextAsync(ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
@@ -71,29 +87,60 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     }
 
     /// <summary>
-    /// Deletes the session directory once the browser process behind the context has actually exited. The context's
-    /// Close event fires when the API object is torn down, several seconds before Edge releases its files; starting
-    /// the retries from the browser's Disconnected event keeps the retry budget aligned with the real release time.
+    /// Deletes the session directory once the browser process behind the context has exited. Deletion is attempted
+    /// from the moment the context closes and then every retry interval; the browser's Disconnected event only wakes
+    /// the loop early. Waiting for the event alone is not enough: when the driver process dies, the event never
+    /// arrives although the browser is gone and the directory is free.
     /// </summary>
     private void ScheduleSessionCleanup(IBrowserContext context, string sessionDir)
     {
-        var browser = context.Browser;
-        if (browser is null)
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (context.Browser is { } browser)
         {
-            context.Close += (_, _) => TrackCleanup(SessionDirectoryCleaner.DeleteWithRetryAsync(sessionDir));
-            return;
+            browser.Disconnected += (_, _) => exited.TrySetResult();
         }
 
-        var exited = new TaskCompletionSource();
-        browser.Disconnected += (_, _) => exited.TrySetResult();
-        context.Close += (_, _) => TrackCleanup(DeleteAfterAsync(exited.Task, sessionDir));
+        context.Close += (_, _) => TrackCleanup(DeleteWhenReleasedAsync(exited.Task, sessionDir));
     }
 
-    private static async Task DeleteAfterAsync(Task browserExited, string sessionDir)
+    /// <summary>
+    /// The driver died, taking every browser it launched with it: contexts that were still open never report Close,
+    /// so their directories are released here. Runs for each session directory this factory still knows about.
+    /// </summary>
+    private void CleanUpOpenSessions()
     {
-        // Bounded so a browser that never reports disconnection cannot pin the cleanup forever.
-        await Task.WhenAny(browserExited, Task.Delay(SessionDirectoryCleaner.DefaultRetryDelay * SessionDirectoryCleaner.DefaultAttempts));
-        await SessionDirectoryCleaner.DeleteWithRetryAsync(sessionDir);
+        foreach (var sessionDir in _openSessions.Keys)
+        {
+            TrackCleanup(DeleteWhenReleasedAsync(Task.CompletedTask, sessionDir));
+        }
+    }
+
+    private async Task DeleteWhenReleasedAsync(Task browserExited, string sessionDir)
+    {
+        var delay = SessionDirectoryCleaner.DefaultRetryDelay;
+        var attempt = 0;
+        for (; attempt < SessionDirectoryCleaner.DefaultAttempts; attempt++)
+        {
+            if (SessionDirectoryCleaner.TryDelete(sessionDir))
+            {
+                break;
+            }
+
+            // Poll while the browser shuts down; return early from the wait as soon as it reports disconnection.
+            await (browserExited.IsCompleted ? Task.Delay(delay) : Task.WhenAny(browserExited, Task.Delay(delay)));
+        }
+
+        if (attempt == SessionDirectoryCleaner.DefaultAttempts)
+        {
+            return; // still held; the stale sweep on the next start takes it
+        }
+
+        // A browser that is still shutting down can write one last file (Edge: BookmarkMergedSurfaceOrdering) and
+        // recreate the directory after it was deleted. Wait for it to report disconnection, then delete once more.
+        var remaining = delay * (SessionDirectoryCleaner.DefaultAttempts - attempt);
+        await (browserExited.IsCompleted ? Task.Delay(delay * 4) : Task.WhenAny(browserExited, Task.Delay(remaining)));
+        SessionDirectoryCleaner.TryDelete(sessionDir);
+        _openSessions.TryRemove(sessionDir, out _);
     }
 
     /// <summary>Headless fetches get a fresh, cache-free copy of the profile; interactive ones use the profile itself.</summary>
@@ -130,14 +177,38 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     {
         try
         {
-            return await _driver.RunAsync(
+            var context = await _driver.RunAsync(
                 playwright => playwright.Chromium.LaunchPersistentContextAsync(userDataDir, options),
                 PlaywrightErrors.IsDriverProcessExited,
                 cancellationToken);
+
+            // Tracked only once a browser actually owns the directory. A launch that is being retried on a fresh
+            // driver must not be swept by the DriverLost handler in between.
+            if (profile.Headless)
+            {
+                _openSessions.TryAdd(userDataDir, 0);
+            }
+
+            return context;
         }
         catch (PlaywrightException ex) when (PlaywrightErrors.IsMissingBrowserExecutable(ex))
         {
+            ReleaseUnlaunchedSession(profile, userDataDir);
             throw new InvalidOperationException(BuildMissingBrowserMessage(profile), ex);
+        }
+        catch
+        {
+            ReleaseUnlaunchedSession(profile, userDataDir);
+            throw;
+        }
+    }
+
+    /// <summary>A headless session directory whose browser never started has no owner; remove it right away.</summary>
+    private void ReleaseUnlaunchedSession(ProfileDescriptor profile, string userDataDir)
+    {
+        if (profile.Headless)
+        {
+            TrackCleanup(DeleteWhenReleasedAsync(Task.CompletedTask, userDataDir));
         }
     }
 
@@ -151,6 +222,9 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     public async ValueTask DisposeAsync()
     {
         await _driver.DisposeAsync();
+
+        // Disposing the driver closes its browsers; whatever is still tracked has no context left to report Close.
+        CleanUpOpenSessions();
 
         // Short-lived hosts (the CLI) exit right after a fetch; give directory cleanup a bounded chance to finish.
         var pending = _pendingCleanups.Keys.ToArray();
