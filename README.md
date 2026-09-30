@@ -407,6 +407,11 @@ Fetches share one Playwright driver process per host. If that process dies (a cr
 Headless fetches run in a throw-away copy of the profile that excludes caches (about 2 MB instead of 30+ MB); the
 copy is deleted after the fetch, and copies older than an hour are swept at start-up.
 
+A headless Chromium/Edge reports `HeadlessChrome/<version>` as its product token although it is the same browser
+build, and a number of sites answer that token with a reduced page or a "Just a moment..." verification page instead
+of the article. The fetcher reads the browser's own user agent once per channel and presents it without the headless
+marker (same version, so it stays consistent with the `sec-ch-ua` client hints the browser sends).
+
 ## Agent Skills
 
 Zakira.Recall ships an [Agent Skill](https://agentskills.io) so MCP-compatible coding agents (Claude Code, OpenCode, Cursor, GitHub Copilot, Gemini CLI, and others) can discover when and how to use it without you having to spell it out in every prompt.

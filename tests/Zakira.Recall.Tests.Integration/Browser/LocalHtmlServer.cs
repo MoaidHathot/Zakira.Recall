@@ -10,6 +10,9 @@ internal sealed class LocalHtmlServer : IDisposable
     private readonly HttpListener _listener;
     private readonly Func<string, (int Status, string Html)> _handler;
     private readonly CancellationTokenSource _stop = new();
+    private readonly List<CapturedRequest> _requests = [];
+
+    internal sealed record CapturedRequest(string Path, IReadOnlyDictionary<string, string> Headers);
 
     private LocalHtmlServer(HttpListener listener, string baseUrl, Func<string, (int Status, string Html)> handler)
     {
@@ -21,6 +24,18 @@ internal sealed class LocalHtmlServer : IDisposable
 
     /// <summary>Base URL with a trailing slash, e.g. http://127.0.0.1:54321/.</summary>
     public string BaseUrl { get; }
+
+    /// <summary>Every request received so far, with its headers (header names as sent, case-insensitive lookup).</summary>
+    public IReadOnlyList<CapturedRequest> Requests
+    {
+        get
+        {
+            lock (_requests)
+            {
+                return _requests.ToArray();
+            }
+        }
+    }
 
     public string UrlFor(string path) => BaseUrl + path.TrimStart('/');
 
@@ -53,7 +68,22 @@ internal sealed class LocalHtmlServer : IDisposable
                 return;
             }
 
-            var (status, html) = _handler(context.Request.Url?.AbsolutePath.TrimStart('/') ?? string.Empty);
+            var path = context.Request.Url?.AbsolutePath.TrimStart('/') ?? string.Empty;
+            var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var name in context.Request.Headers.AllKeys)
+            {
+                if (name is not null)
+                {
+                    headers[name] = context.Request.Headers[name] ?? string.Empty;
+                }
+            }
+
+            lock (_requests)
+            {
+                _requests.Add(new CapturedRequest(path, headers));
+            }
+
+            var (status, html) = _handler(path);
             var payload = Encoding.UTF8.GetBytes(html);
             context.Response.StatusCode = status;
             context.Response.ContentType = "text/html; charset=utf-8";

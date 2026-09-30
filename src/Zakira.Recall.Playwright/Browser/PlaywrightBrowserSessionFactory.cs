@@ -12,11 +12,20 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     /// <summary>Session directories older than this cannot belong to a live fetch and are swept at start-up.</summary>
     internal static readonly TimeSpan StaleSessionAge = TimeSpan.FromHours(1);
 
-    /// <summary>How long disposal waits for background directory cleanup before letting the process exit.</summary>
-    internal static readonly TimeSpan CleanupDrainTimeout = TimeSpan.FromSeconds(5);
+    /// <summary>
+    /// How long disposal waits for background directory cleanup before letting the process exit. Edge takes about
+    /// 6.5 s from Close to releasing its last file; the wait must cover that or short-lived CLI runs leak the directory.
+    /// </summary>
+    internal static readonly TimeSpan CleanupDrainTimeout = TimeSpan.FromSeconds(12);
 
     private readonly ConcurrentDictionary<string, bool> _sweptProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<Task, byte> _pendingCleanups = new();
+
+    /// <summary>
+    /// Per browser channel: the user agent to present (null when the browser's own string needs no change).
+    /// Learned from the first headless launch, see <see cref="BrowserIdentity"/>.
+    /// </summary>
+    private readonly ConcurrentDictionary<string, string?> _userAgentOverrides = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The Playwright driver is a Node child process shared by every fetch in this process. If it dies (crash, or an
@@ -30,15 +39,82 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
     public async ValueTask<IBrowserContext> CreateContextAsync(ProfileDescriptor profile, CancellationToken cancellationToken = default)
     {
         SweepStaleSessionsOnce(profile);
+        var userDataDir = PrepareSessionDirectory(profile);
+
+        var options = BuildLaunchOptions(profile, GetKnownUserAgent(profile));
+        var context = await LaunchAsync(profile, userDataDir, options, cancellationToken);
+
+        if (profile.Headless && !_userAgentOverrides.ContainsKey(profile.Channel))
+        {
+            // First headless launch for this channel: learn the browser's own user agent and, if it carries the
+            // headless marker, relaunch once with the regular form. Later launches use the cached value directly.
+            var reported = await ReadUserAgentAsync(context);
+            var normalized = BrowserIdentity.NormalizeUserAgent(reported);
+            _userAgentOverrides.TryAdd(profile.Channel, normalized);
+            if (normalized is not null)
+            {
+                ScheduleSessionCleanup(context, userDataDir);
+                await context.CloseAsync();
+                userDataDir = PrepareSessionDirectory(profile);
+                options.UserAgent = normalized;
+                context = await LaunchAsync(profile, userDataDir, options, cancellationToken);
+            }
+        }
+
+        await HardenContextAsync(context, cancellationToken);
+        if (profile.Headless)
+        {
+            ScheduleSessionCleanup(context, userDataDir);
+        }
+
+        return context;
+    }
+
+    /// <summary>
+    /// Deletes the session directory once the browser process behind the context has actually exited. The context's
+    /// Close event fires when the API object is torn down, several seconds before Edge releases its files; starting
+    /// the retries from the browser's Disconnected event keeps the retry budget aligned with the real release time.
+    /// </summary>
+    private void ScheduleSessionCleanup(IBrowserContext context, string sessionDir)
+    {
+        var browser = context.Browser;
+        if (browser is null)
+        {
+            context.Close += (_, _) => TrackCleanup(SessionDirectoryCleaner.DeleteWithRetryAsync(sessionDir));
+            return;
+        }
+
+        var exited = new TaskCompletionSource();
+        browser.Disconnected += (_, _) => exited.TrySetResult();
+        context.Close += (_, _) => TrackCleanup(DeleteAfterAsync(exited.Task, sessionDir));
+    }
+
+    private static async Task DeleteAfterAsync(Task browserExited, string sessionDir)
+    {
+        // Bounded so a browser that never reports disconnection cannot pin the cleanup forever.
+        await Task.WhenAny(browserExited, Task.Delay(SessionDirectoryCleaner.DefaultRetryDelay * SessionDirectoryCleaner.DefaultAttempts));
+        await SessionDirectoryCleaner.DeleteWithRetryAsync(sessionDir);
+    }
+
+    /// <summary>Headless fetches get a fresh, cache-free copy of the profile; interactive ones use the profile itself.</summary>
+    private static string PrepareSessionDirectory(ProfileDescriptor profile)
+    {
         var userDataDir = ResolveUserDataDir(profile);
         Directory.CreateDirectory(userDataDir);
         PrepareSessionUserDataDir(profile, userDataDir);
+        return userDataDir;
+    }
 
-        var options = new BrowserTypeLaunchPersistentContextOptions
+    private string? GetKnownUserAgent(ProfileDescriptor profile)
+        => profile.Headless && _userAgentOverrides.TryGetValue(profile.Channel, out var userAgent) ? userAgent : null;
+
+    private static BrowserTypeLaunchPersistentContextOptions BuildLaunchOptions(ProfileDescriptor profile, string? userAgent)
+        => new()
         {
             Channel = profile.Channel == "chromium" ? null : profile.Channel,
             Headless = profile.Headless,
             Locale = profile.Locale,
+            UserAgent = userAgent,
             IgnoreHTTPSErrors = false,
             ColorScheme = ColorScheme.Light,
             DeviceScaleFactor = 1,
@@ -50,10 +126,11 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
             ]
         };
 
-        IBrowserContext context;
+    private async Task<IBrowserContext> LaunchAsync(ProfileDescriptor profile, string userDataDir, BrowserTypeLaunchPersistentContextOptions options, CancellationToken cancellationToken)
+    {
         try
         {
-            context = await _driver.RunAsync(
+            return await _driver.RunAsync(
                 playwright => playwright.Chromium.LaunchPersistentContextAsync(userDataDir, options),
                 PlaywrightErrors.IsDriverProcessExited,
                 cancellationToken);
@@ -62,15 +139,13 @@ public sealed class PlaywrightBrowserSessionFactory : IBrowserSessionFactory, IA
         {
             throw new InvalidOperationException(BuildMissingBrowserMessage(profile), ex);
         }
+    }
 
-        await HardenContextAsync(context, cancellationToken);
-        if (profile.Headless)
-        {
-            // Edge releases its files shortly after the context closes; retry in the background instead of leaking the directory.
-            context.Close += (_, _) => TrackCleanup(SessionDirectoryCleaner.DeleteWithRetryAsync(userDataDir));
-        }
-
-        return context;
+    /// <summary>Reads navigator.userAgent from the initial blank page; no navigation, no network.</summary>
+    private static async Task<string?> ReadUserAgentAsync(IBrowserContext context)
+    {
+        var page = context.Pages.FirstOrDefault() ?? await context.NewPageAsync();
+        return await page.EvaluateAsync<string>("() => navigator.userAgent");
     }
 
     public async ValueTask DisposeAsync()

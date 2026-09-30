@@ -7,7 +7,12 @@ namespace Zakira.Recall.Playwright.Browser;
 internal static class SessionDirectoryCleaner
 {
     internal static readonly TimeSpan DefaultRetryDelay = TimeSpan.FromMilliseconds(250);
-    internal const int DefaultAttempts = 12;
+
+    /// <summary>
+    /// 40 x 250 ms = 10 s. Edge needs about 6.5 s from Close to releasing the last file on a warm machine; the budget
+    /// leaves headroom for slower disks without keeping a host alive for long.
+    /// </summary>
+    internal const int DefaultAttempts = 40;
 
     /// <summary>Deletes <paramref name="path"/>, retrying while the browser releases its files. Never throws.</summary>
     public static async Task DeleteWithRetryAsync(string path, int attempts = DefaultAttempts, TimeSpan? delay = null)
