@@ -50,10 +50,23 @@ if ([string]::IsNullOrWhiteSpace($ApiKey)) {
     throw 'NuGet push requested but no API key was provided. Pass -ApiKey or set NUGET_API_KEY.'
 }
 
-Write-Host 'Pushing package to NuGet.org...'
-dotnet nuget push "$($package.FullName)" --source $nugetSource --api-key $ApiKey --skip-duplicate
-if ($LASTEXITCODE -ne 0) {
-    throw 'dotnet nuget push failed.'
+# api.nuget.org (v3) is the preferred endpoint, but some networks terminate its TLS handshake while
+# www.nuget.org stays reachable; the v2 push endpoint accepts the same package and key.
+$pushSources = @($nugetSource, 'https://www.nuget.org/api/v2/package')
+$pushed = $false
+foreach ($source in $pushSources) {
+    Write-Host "Pushing package to $source..."
+    dotnet nuget push "$($package.FullName)" --source $source --api-key $ApiKey --skip-duplicate
+    if ($LASTEXITCODE -eq 0) {
+        $pushed = $true
+        break
+    }
+
+    Write-Warning "Push to $source failed (exit code $LASTEXITCODE)."
+}
+
+if (-not $pushed) {
+    throw 'dotnet nuget push failed against every endpoint.'
 }
 
 Write-Host 'Push complete.'
