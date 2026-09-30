@@ -51,7 +51,9 @@ public sealed class UserAgentTests
             // The major version in the user agent must match the sec-ch-ua client hints the browser adds itself.
             var major = userAgent.Split("Chrome/")[1].Split('.')[0];
             Assert.Contains($"\"Chromium\";v=\"{major}\"", request.Headers["sec-ch-ua"]);
-            Assert.Equal("en-US", request.Headers["Accept-Language"]);
+
+            // "en-US" when the profile sets a locale, "en-US,en;q=0.9" from --lang=en-US when it does not.
+            Assert.StartsWith("en-US", request.Headers["Accept-Language"]);
         }
     }
 }

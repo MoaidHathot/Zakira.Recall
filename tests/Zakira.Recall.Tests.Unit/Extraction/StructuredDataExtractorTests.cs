@@ -176,13 +176,21 @@ public sealed class StructuredDataExtractorTests
 
     [Theory]
     [InlineData("https://a.example/x.jpg", "https://b.example/", "https://a.example/x.jpg")]
+    [InlineData("HTTP://a.example/x.jpg", "https://b.example/", "http://a.example/x.jpg")]
     [InlineData("/img/x.jpg", "https://b.example/post/1", "https://b.example/img/x.jpg")]
     [InlineData("img/x.jpg", "https://b.example/post/1", "https://b.example/post/img/x.jpg")]
+    [InlineData("//cdn.example/x.jpg", "https://b.example/post/1", "https://cdn.example/x.jpg")]
+    [InlineData("?img=1", "https://b.example/post/1", "https://b.example/post/1?img=1")]
     [InlineData("data:image/png;base64,AAAA", "https://b.example/", null)]
+    [InlineData("javascript:void(0)", "https://b.example/", null)]
+    [InlineData("ftp://a.example/x.jpg", "https://b.example/", null)]
     [InlineData("/img/x.jpg", null, null)]
+    [InlineData("/img/x.jpg", "file:///tmp/page.html", null)]
     [InlineData("   ", "https://b.example/", null)]
     public void Resolves_Image_Urls_To_Absolute_Http(string? value, string? baseUrl, string? expected)
     {
+        // "/img/x.jpg" must resolve the same way on every OS: on Unix, .NET parses a rooted path as an absolute file URI
+        // when asked for UriKind.Absolute, which used to drop every root-relative image on Linux and macOS.
         Assert.Equal(expected, ReadableContentExtractor.ResolveUrl(value, baseUrl));
     }
 }

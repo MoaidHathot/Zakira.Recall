@@ -236,12 +236,20 @@ public sealed class ReadableContentExtractor : IContentExtractor
         }
 
         var trimmed = value.Trim();
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
+        if (HasScheme(trimmed))
         {
-            return IsHttp(absolute) ? absolute.ToString() : null;
+            // data:, mailto:, javascript: and friends are rejected here; only web URLs are useful as images.
+            return Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute) && IsHttp(absolute) ? absolute.ToString() : null;
         }
 
-        if (Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri) && Uri.TryCreate(baseUri, trimmed, out var resolved) && IsHttp(resolved))
+        // No scheme: a relative reference ("/img/x.jpg", "img/x.jpg", "//cdn.example/x.jpg"). Combine it with the page
+        // URL explicitly. Uri.TryCreate(…, UriKind.Absolute) is not used for this decision because on Unix it parses a
+        // rooted path as an absolute file:// URI, which would silently drop every root-relative image.
+        if (Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)
+            && IsHttp(baseUri)
+            && Uri.TryCreate(trimmed, UriKind.Relative, out var relative)
+            && Uri.TryCreate(baseUri, relative, out var resolved)
+            && IsHttp(resolved))
         {
             return resolved.ToString();
         }
@@ -249,6 +257,28 @@ public sealed class ReadableContentExtractor : IContentExtractor
         return null;
 
         static bool IsHttp(Uri uri) => uri.Scheme is "http" or "https";
+
+        // RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ) followed by ":". A Windows drive letter ("C:\") is
+        // not a concern for values that come from HTML attributes and JSON-LD.
+        static bool HasScheme(string candidate)
+        {
+            var colon = candidate.IndexOf(':');
+            if (colon <= 0 || !char.IsAsciiLetter(candidate[0]))
+            {
+                return false;
+            }
+
+            for (var index = 1; index < colon; index++)
+            {
+                var ch = candidate[index];
+                if (!char.IsAsciiLetterOrDigit(ch) && ch is not ('+' or '-' or '.'))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     }
 
     internal static string Describe(IElement element)

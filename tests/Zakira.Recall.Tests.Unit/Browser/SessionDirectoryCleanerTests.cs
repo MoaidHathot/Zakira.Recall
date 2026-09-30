@@ -36,7 +36,7 @@ public sealed class SessionDirectoryCleanerTests : IDisposable
         var inUse = CreateSession("in-use", TimeSpan.FromHours(3));
 
         int removed;
-        using (new FileStream(Path.Combine(inUse, "Preferences"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        using (new DirectoryLock(inUse, "Preferences"))
         {
             removed = SessionDirectoryCleaner.SweepStale(_root, TimeSpan.FromHours(1));
         }
@@ -57,14 +57,13 @@ public sealed class SessionDirectoryCleanerTests : IDisposable
     public async Task Delete_Retries_Until_The_Browser_Releases_Its_Files()
     {
         var session = CreateSession("closing", TimeSpan.Zero);
-        var file = Path.Combine(session, "Preferences");
 
         Task deletion;
-        using (new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        using (new DirectoryLock(session, "Preferences"))
         {
             deletion = SessionDirectoryCleaner.DeleteWithRetryAsync(session, attempts: 40, delay: TimeSpan.FromMilliseconds(50));
             await Task.Delay(200);
-            Assert.True(Directory.Exists(session)); // still locked
+            Assert.True(Directory.Exists(session)); // still held
         }
 
         await deletion;
@@ -76,10 +75,26 @@ public sealed class SessionDirectoryCleanerTests : IDisposable
     {
         var session = CreateSession("stuck", TimeSpan.Zero);
 
-        using (new FileStream(Path.Combine(session, "Preferences"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        using (new DirectoryLock(session, "Preferences"))
         {
             await SessionDirectoryCleaner.DeleteWithRetryAsync(session, attempts: 3, delay: TimeSpan.FromMilliseconds(10));
             Assert.True(Directory.Exists(session));
         }
+    }
+
+    [Fact]
+    public void Directory_Lock_Actually_Prevents_Deletion_On_This_Platform()
+    {
+        // Guards the other tests against a platform where the lock strategy is a no-op.
+        var session = CreateSession("probe", TimeSpan.Zero);
+
+        using (new DirectoryLock(session, "Preferences"))
+        {
+            Assert.False(SessionDirectoryCleaner.TryDelete(session));
+            Assert.True(Directory.Exists(session));
+        }
+
+        Assert.True(SessionDirectoryCleaner.TryDelete(session));
+        Assert.False(Directory.Exists(session));
     }
 }
