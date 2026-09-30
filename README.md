@@ -422,11 +422,11 @@ The skill lives in this repo at:
 
 It is a single skill called `zakira-recall` with a small `SKILL.md` index that routes the agent to focused references for each task:
 
-- `references/search.md` — `WebSearch` / `recall search`
-- `references/research.md` — `WebResearch` / `recall research`
-- `references/fetch.md` — `WebFetch`, `WebBatchFetch`, `WebSearchThenFetch` / `recall fetch`
-- `references/setup.md` — install, Playwright, MCP registration
-- `references/troubleshooting.md` — consent pages, captchas, provider health, fallback
+- `references/search.md` — `web_search` / `recall search`
+- `references/research.md` — `web_research` / `recall research`
+- `references/fetch.md` — `web_fetch`, `web_batch_fetch`, `web_search_then_fetch` / `recall fetch`, response fields and error codes
+- `references/setup.md` — install, browser runtime, MCP registration
+- `references/troubleshooting.md` — error codes, verification pages, consent, provider health, fallback
 - `references/mcp-tools.md` — complete MCP tool reference
 
 ### Install the skill
