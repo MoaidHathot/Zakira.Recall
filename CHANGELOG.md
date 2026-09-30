@@ -4,6 +4,16 @@ All notable changes to Zakira.Recall are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow [Semantic Versioning](https://semver.org/)
 while the project is pre-1.0 (minor bumps may change behaviour).
 
+## [0.6.1] - 2026-10-01
+
+### Fixed
+
+- On Linux and macOS, root-relative image references (`/img/photo.jpg` in `og:image` or JSON-LD) were dropped, leaving
+  `mainImage` empty: .NET parses a rooted path as an absolute `file://` URI there. References without a scheme are now
+  combined with the page URL on every platform.
+- `pack.ps1 -Push` falls back to the `www.nuget.org` v2 endpoint when `api.nuget.org` is unreachable.
+- Test suite portability on Unix (directory-lock simulation, locale-dependent `Accept-Language` assertion).
+
 ## [0.6.0] - 2026-10-01
 
 Page fetching was rebuilt around what agents actually need from a page: the whole readable article, its structured
@@ -123,6 +133,7 @@ under 0.6.0.)
   and health tracking, the `recall mcp` stdio server, `recall config init`, `pack.ps1` and CI workflows for Windows,
   Linux and macOS.
 
+[0.6.1]: https://github.com/MoaidHathot/Zakira.Recall/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/MoaidHathot/Zakira.Recall/compare/a1427ec...v0.6.0
 [0.5.0]: https://github.com/MoaidHathot/Zakira.Recall/compare/4ec7664...a1427ec
 [0.4.0]: https://github.com/MoaidHathot/Zakira.Recall/compare/f6e3265...4ec7664
