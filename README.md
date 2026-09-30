@@ -459,6 +459,8 @@ You can also install it per-project by copying the folder into `.opencode/skills
 
 ## Pack
 
+Release notes for every version are in [CHANGELOG.md](CHANGELOG.md).
+
 Pack the NuGet tool locally:
 
 ```powershell
